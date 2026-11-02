@@ -52,3 +52,32 @@ Linux/systemd integration is a separate acceptance activity; a macOS build or
 mocked service test cannot prove it. Docker is not silently substituted for an
 implemented runtime provider. Keep update operations restricted to the panel;
 release tooling must never restart Minecraft or modify worlds/content.
+
+## Offline recovery CLI changes
+
+The offline path in `cmd/control/recovery*.go` holds the same exclusive
+`panel.lock` as `serve`. It opens existing private panel state without migrations
+or initialization. Never call `App.Start` or start job workers from recovery:
+`Engine.RunOne(ctx, jobID)` must execute only the named queued job. The zero-worker
+engine startup is used solely to mark orphaned running jobs interrupted under the
+exclusive process lock. Backup and restore use the existing domain/API jobs;
+recovery must not grow a second archive or restore implementation.
+
+Run the CLI regressions in the isolated Linux sandbox after building the embedded
+frontend:
+
+```sh
+make frontend
+bash scripts/test-sandbox.sh ./cmd/control ./internal/jobs ./internal/api ./internal/backups ./internal/auth ./internal/database ./internal/secrets ./internal/files ./internal/modrinth
+```
+
+Recovery tests create disposable initialized state, use a fake runtime rather
+than host service units, and execute the unprivileged CLI cases as UID/GID 65534
+when the sandbox itself runs as root. They cover missing confirmation/state/key,
+unsafe links, the exclusive panel lock, TOTP login, private CLI-session handling,
+nonredirecting requests, explicit-job isolation, verified backup/restore with no
+panel HTTP server, retained-tree recovery and content rollback without world
+rollback. These tests are not evidence of real systemd/ACL/Minecraft acceptance.
+See [disaster recovery](disaster-recovery.md) for exact administrative commands
+and the conservative refusal cases. Do not use production state for recovery
+tests.
