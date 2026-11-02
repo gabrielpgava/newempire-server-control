@@ -18,7 +18,7 @@ build: frontend
 	go build -mod=readonly -trimpath -o bin/new-empire-control ./cmd/control
 
 security:
-	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 	npm --prefix web audit --omit=dev --audit-level=low
 
 release-test:
