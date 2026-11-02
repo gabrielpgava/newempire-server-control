@@ -1,0 +1,36 @@
+{
+  "title": "An operating system for deliberate changes",
+  "question": "The approved practical, code-first direction is the assigned reserve survey system. This board records its alternatives; no new blocking interview is required.",
+  "options": [
+    {
+      "id": "reserve-survey", "kind": "assigned", "label": "Nature reserve survey sheets", "kicker": "THE ROLL",
+      "lineage": "Reserve inventory sheets and field observations",
+      "thesis": "Every instance gets a clear working record and an observed readiness line.",
+      "palette": ["#193b36", "#eef3ee", "#256447", "#203e35"],
+      "materials": ["pine navigation", "pale working surface", "crisp system type", "compact ruled tables"],
+      "viewport": "Familiar side navigation and instance toolbar lead into the task heading, lifecycle line, current observations, and recent jobs.",
+      "risk": "Restrained color cannot substitute for complete states and useful data density.",
+      "raised": [
+        { "from": "Ikeda Datamatics", "raise": "Dense data must retain a strict hierarchy and unmistakable units." },
+        { "from": "Vertical video feed", "raise": "Every work area must have an unmistakable primary action." },
+        { "from": "Saville catalog", "raise": "Instance and job identities stay consistent across every route." },
+        { "from": "Cassette J-card", "raise": "Group compact information without hiding it inside nested containers." },
+        { "from": "Emigre bitmap specimen", "raise": "Type hierarchy must remain decisive even without display theatrics." },
+        { "from": "Labanotation", "raise": "Lifecycle order must be explicit and unknown stages must remain open." }
+      ],
+      "wireframe": { "cols": 12, "rows": 10, "regions": [ { "label": "Navigation", "x": 0, "y": 0, "w": 2, "h": 10, "accent": true }, { "label": "Instance toolbar", "x": 2, "y": 0, "w": 10, "h": 1 }, { "label": "Task and primary action", "x": 2, "y": 1, "w": 10, "h": 1 }, { "label": "Observed lifecycle", "x": 2, "y": 2, "w": 10, "h": 1 }, { "label": "Current observation", "x": 2, "y": 3, "w": 10, "h": 2 }, { "label": "Recovery coverage", "x": 2, "y": 5, "w": 5, "h": 2 }, { "label": "Instance record", "x": 7, "y": 5, "w": 5, "h": 2 }, { "label": "Recent jobs", "x": 2, "y": 7, "w": 10, "h": 3 } ] }
+    },
+    { "id": "field-guide", "kind": "pick", "label": "Community field guide", "kicker": "IMPECCABLE’S PICK", "lineage": "Portable field guides", "thesis": "Task groups read like a compact reference for the instance.", "palette": ["#254431", "#f1f4ec", "#8b9b69"], "materials": ["compact system type", "muted chapter color", "dense reference tables"], "viewport": "The same standard shell with a compact summary and task-specific reference tables.", "risk": "Familiar and effective, but also the conventional grounded destination for this category." },
+    { "id": "ikeda", "kind": "challenger", "catalogId": "ikeda-datamatics", "label": "Ikeda Datamatics", "verdict": "declined", "thesis": "Compress the system into precise observations.", "palette": ["#111111", "#eeeeee", "#666666"], "materials": ["strict data alignment", "high-contrast numerals"], "viewport": "A standard admin shell with a dense data-first work area.", "risk": "Literal audiovisual expression obscures readiness and safety.", "case": "Loses audience identification and operational clarity against the grounded reserve system.", "kept": "Data-density discipline without the audiovisual costume." },
+    { "id": "vertical-feed", "kind": "challenger", "catalogId": "pop-culture-shelf-vertical-video-feed-surface", "label": "Vertical video feed", "verdict": "declined", "thesis": "Make the next primary action unmistakable.", "palette": ["#141414", "#ffffff", "#e65467"], "materials": ["immediate action hierarchy", "strong active state"], "viewport": "Standard navigation with one leading operation in each work area.", "risk": "Feed behavior conflicts with dense, simultaneous administration.", "case": "Loses both axes when translated literally.", "kept": "Primary-action clarity, not feed navigation." },
+    { "id": "saville", "kind": "challenger", "catalogId": "brand-identity-canon-saville-catalog-sleeve", "label": "Saville catalog sleeve", "verdict": "declined", "thesis": "Make identity and classification systematic.", "palette": ["#263b42", "#f2f2ec", "#879797"], "materials": ["systematic IDs", "calibrated type"], "viewport": "Standard navigation with stable instance and job identifiers.", "risk": "Sleeve-like withholding of information hurts safety.", "case": "Loses both axes as the governing world.", "kept": "Stable identifiers and calibrated information hierarchy." },
+    { "id": "cassette", "kind": "challenger", "catalogId": "vernacular-ephemera-cassette-j-card", "label": "Cassette J-card", "verdict": "declined", "thesis": "Group compact facts without wasting space.", "palette": ["#314541", "#ecefe6", "#a7b88a"], "materials": ["compact grouping", "clear divisions"], "viewport": "A standard workspace with concise task groups and readable tables.", "risk": "A sleeve costume would compete with operational meaning.", "case": "Loses both axes when used as the visual world.", "kept": "Compact grouping without nested cards." },
+    { "id": "emigre", "kind": "challenger", "catalogId": "emigre-bitmap-specimen", "label": "Emigre bitmap specimen", "verdict": "declined", "thesis": "Create hierarchy that survives at high density.", "palette": ["#202020", "#efefea", "#536c50"], "materials": ["decisive hierarchy", "compact labels"], "viewport": "A standard admin shell with deliberate title, label, and data scales.", "risk": "Bitmap typography harms sustained reading and accessibility.", "case": "Loses both axes as literal expression.", "kept": "Hierarchy discipline without bitmap lettering." },
+    { "id": "laban", "kind": "challenger", "catalogId": "notation-diagram-systems-labanotation", "label": "Labanotation", "verdict": "declined", "thesis": "Show sequence without hiding unobserved states.", "palette": ["#25372c", "#f2f4ed", "#8ba184"], "materials": ["ordered states", "explicit sequence"], "viewport": "Standard navigation with a semantic lifecycle line above the current observations.", "risk": "Specialized notation is unfamiliar to server administrators.", "case": "Loses both axes as a notation-led interface.", "kept": "Explicit lifecycle order, not specialist symbols." }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "steer": true,
+  "canon": true,
+  "canonCard": { "kind": "canon", "label": "The category standard", "thesis": "A familiar administration UI, played straight.", "palette": ["#f5f7fa", "#1f2937", "#2563eb"], "materials": ["neutral shell", "standard tables"], "viewport": "A conventional side rail, toolbar, status summary, and work tables.", "risk": "Indistinguishable from peer panels by design." },
+  "buildPath": { "value": "code", "toggle": false }
+}
