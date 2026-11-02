@@ -160,6 +160,8 @@ supported safe keys and reserve managed credentials/ports for the proper workflo
 
 ## systemd and RCON boundaries
 
+When the HTTP panel is unavailable, the stopped-panel CLI's explicitly confirmed runtime recovery verifies both the original backup and retained launcher/properties before restoring runtime/configuration metadata. It retains a verified inspection archive of the displaced tree, without a portable instance sidecar because an interrupted migration may contain mixed runtime files. World bytes are never restored by this operation. A possible Minecraft world-format change keeps the old runtime blocked until a separate administrator-confirmed pre-upgrade world restore; that guard is persisted before metadata replacement so a failed acknowledgement cannot lose it. See [disaster recovery](disaster-recovery.md).
+
 `runtime.NewSystemd(helper)` implements `runtime.ServerRuntime`; see the exact
 privileged helper protocol in [`internal/runtime/API.md`](../internal/runtime/API.md).
 The adapter uses an absolute helper path with `/usr/bin/sudo -n` and fixed argument

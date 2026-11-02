@@ -14,12 +14,15 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Modrinth hash inventory, dependency-aware content plans, managed-content policies, pins, and modpack domain support.
 - Player moderation, world selection, safe property editing, schedules, metrics, and notification/offsite-storage integration modules.
 - Embedded React/TypeScript interface, administrative CLI, deployment assets, and signed panel-release/update infrastructure.
+- Locked offline backup, retained-data recovery and emergency owner access without a running HTTP panel; existing-state-only loading and targeted durable jobs prevent accidental bootstrap or unrelated queued execution.
 - English public-product guides, OpenAPI 3.1 schemas, upstream references, and an acceptance-evidence matrix.
 
 ### Fixed
 
 - Validate portable backup instance metadata before stopping Minecraft or replacing world data; restore archived service memory settings as well as Java/launcher choices.
 - Keep interrupted full-tree restores blocked until explicitly selected data and runtime metadata are reconciled against a verified snapshot; never automatically replace a world during reconciliation.
+- Verify retained runtime recovery against the original snapshot, preserve displaced data, and latch world-format review before metadata replacement.
+- Normalize reviewed imported server roots and preserve adoption identities across permission-preparation retries, with static launcher identity and authoritative Java preflight.
 - Block conflicting edits while content readiness/recovery is pending, reject duplicate mod adoption, and preserve unmanaged mods during automatic-safe maintenance.
 - Redact known RCON credentials from console/player job output and errors.
 - Include older conventional commit subjects in release planning even when the newest commit is documentation or a smaller repair.
