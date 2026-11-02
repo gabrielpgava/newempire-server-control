@@ -41,10 +41,10 @@ export function Section({ title, description, actions, children, className = '' 
 export function DataTable<T>({ label, columns, rows, rowKey }: { label: string; columns: { header: string; render: (row: T) => ReactNode; className?: string }[]; rows: T[]; rowKey: (row: T) => string }) {
   return <div className="table-scroll" role="region" aria-label={label} tabIndex={0}><table><caption className="sr-only">{label}</caption><thead><tr>{columns.map(column => <th key={column.header} scope="col" className={column.className}>{column.header}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={rowKey(row)}>{columns.map(column => <td key={column.header} className={column.className}>{column.render(row)}</td>)}</tr>)}</tbody></table></div>
 }
-export function Status({ value }: { value: string }) {
+export function Status({ value, label }: { value: string; label?: string }) {
   const normalized = value.toLowerCase()
   const tone = ['running', 'ready', 'succeeded', 'completed', 'verified', 'online', 'active', 'enabled'].includes(normalized) ? 'good' : ['failed', 'error', 'banned'].includes(normalized) ? 'bad' : ['pending', 'queued', 'starting', 'stopping', 'cancelling', 'degraded', 'staged'].includes(normalized) ? 'warn' : 'neutral'
-  return <span className={`status status-${tone}`}><span aria-hidden="true" />{value.replaceAll('_', ' ')}</span>
+  return <span className={`status status-${tone}`}><span aria-hidden="true" />{label ?? value.replaceAll('_', ' ')}</span>
 }
 export function JobResult({ job }: { job?: Job }) {
   if (!job) return null

@@ -11,7 +11,7 @@ export function RuntimeFields({ initial, versions, java, onGameChange, installer
   return <div className="form-grid">
     <Field label="Minecraft version"><select name="minecraft_version" defaultValue={initial?.minecraft_version ?? ''} onChange={event => onGameChange?.(event.target.value)} required><option value="" disabled>Choose a stable release</option>{games.map(version => <option key={version}>{version}</option>)}</select></Field>
     <Field label="Fabric loader"><select name="loader_version" defaultValue={initial?.loader_version ?? ''} required><option value="" disabled>Choose a stable loader</option>{loaders.map(version => <option key={version}>{version}</option>)}</select></Field>
-    {installer && <Field label="Fabric installer"><select name="installer_version" defaultValue="" required><option value="" disabled>Choose a stable installer</option>{versions.installer_versions.map(version => <option key={version}>{version}</option>)}</select></Field>}
+    {installer && <Field label="Fabric installer"><select name="installer_version" defaultValue={versions.installer_versions[0] ?? ''} required><option value="" disabled>Choose a stable installer</option>{versions.installer_versions.map(version => <option key={version}>{version}</option>)}</select></Field>}
     <Field label="Java runtime" hint="The server checks version compatibility before making changes."><select name="java_path" defaultValue={initial?.java_path ?? ''} required><option value="" disabled>Choose an installed runtime</option>{java.filter(runtime => !runtime.error).map(runtime => <option key={runtime.path} value={runtime.path}>{runtime.version} · {runtime.path}</option>)}</select></Field>
   </div>
 }
@@ -36,7 +36,7 @@ export function NewInstance({ user }: { user: User }) {
       memory_mb: Number(data.get('memory_mb')), port: Number(data.get('port')), rcon_port: Number(data.get('rcon_port')),
       eula: data.get('eula') === 'on', ...(mode === 'adopt' ? { path } : {}),
       ...(mode === 'import' && upload ? { upload_id: upload.id } : {}),
-      ...(mode !== 'create' ? { preview_hash: preview.data?.preview_hash, jar: String(data.get('jar')) } : { installer_version: String(data.get('installer_version')) }),
+      ...(mode !== 'create' ? { preview_hash: preview.data?.preview_hash, jar: String(data.get('jar')) } : { installer_version: String(data.get('installer_version') ?? '') }),
     }
     await operation.run('/instances', body)
   }

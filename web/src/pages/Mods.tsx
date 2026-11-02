@@ -1,7 +1,31 @@
 import { useState } from 'react'
 import { Download, LockKeyhole, Search, ShieldCheck } from 'lucide-react'
-import { canAdmin, instancePath, useAPI, useOperation, type Instance, type Mod, type ModPlan, type ModPolicy, type ModSearchResult, type User } from '../api'
+import { API, canAdmin, instancePath, useAPI, useOperation, type Instance, type Mod, type ModPlan, type ModPolicy, type ModSearchResult, type User } from '../api'
 import { Button, CheckField, DataTable, Empty, ErrorNotice, Field, Notice, OperationFeedback, PageHeading, PlanView, QueryState, ReadOnly, Section, Status, SubmitForm, useConfirm } from '../components'
+import { UploadPanel, type CompletedUpload } from '../uploads'
+
+function ModPlanContents({ plan }: { plan: ModPlan }) {
+  return <><PlanView plan={plan} />{plan.actions.length > 0 && <DataTable label="Planned mod changes" rows={plan.actions} rowKey={action => `${action.project_id}-${action.filename}`} columns={[{ header: 'Project', render: action => action.name }, { header: 'From', render: action => action.from_version || 'Not installed' }, { header: 'To', render: action => action.to_version }, { header: 'Reason', render: action => action.reason }]} />}{plan.blocked.length > 0 && <Notice tone="warning"><strong>The plan is blocked</strong><ul>{plan.blocked.map(reason => <li key={reason}>{reason}</li>)}</ul></Notice>}{plan.actions.length === 0 && <Notice>No mod-version changes are listed in this plan. No files have been applied.</Notice>}</>
+}
+
+function ServerModpack({ instance }: { instance: Instance }) {
+  const [upload, setUpload] = useState<CompletedUpload>()
+  const plan = useOperation<ModPlan>()
+  const operation = useOperation()
+  const confirm = useConfirm()
+  function reset() { setUpload(undefined); plan.reset(); operation.reset() }
+  async function apply() {
+    if (!upload || !plan.data || plan.data.blocked.length) return
+    if (await confirm({ title: 'Apply this server modpack?', body: <p>The server will revalidate the staged .mrpack and its reviewed plan, create a restore point, and apply only after its safety checks and graceful shutdown. World recovery is never automatic.</p>, action: 'Apply server modpack', danger: true, verify: instance.name })) await operation.run(instancePath(instance.id, '/modpacks/apply'), { upload_id: upload.id, plan_hash: plan.data.plan_hash, confirm: true }).catch(() => {})
+  }
+  return <Section title="Server modpack" description="Import a reviewed .mrpack or export managed server content. Export rejects unmanaged or altered JARs." actions={<a className="button button-secondary" href={`${API}${instancePath(instance.id, '/modpacks/export')}`}><Download size={16} />Export .mrpack</a>}>
+    <UploadPanel modpack scope={`${instance.id}-modpack`} disabled={plan.isPending || operation.isPending} onReset={reset} onComplete={completed => { setUpload(completed); plan.reset(); operation.reset() }} />
+    {upload && <Button busy={plan.isPending} disabled={operation.isPending} onClick={() => { operation.reset(); void plan.run(instancePath(instance.id, '/modpacks/preview'), { upload_id: upload.id }).catch(() => {}) }}>Preview server modpack</Button>}
+    {plan.error && <ErrorNotice error={plan.error} />}
+    {plan.data && <><h3>Reviewed server modpack plan</h3><ModPlanContents plan={plan.data} /><Button variant="primary" busy={operation.isPending} disabled={!!plan.data.blocked.length || operation.isSuccess} onClick={() => { void apply() }}>Apply reviewed server modpack</Button></>}
+    <OperationFeedback operation={operation} />
+  </Section>
+}
 
 export function Mods({ instance, user }: { instance: Instance; user: User }) {
   const inventory = useAPI<Mod[]>(instancePath(instance.id, '/mods'))
@@ -37,7 +61,8 @@ export function Mods({ instance, user }: { instance: Instance; user: User }) {
       { header: 'Project', render: result => <><strong>{result.title}</strong><small className="table-secondary">{result.description}</small></> },
       { header: 'ID', render: result => <code>{result.project_id}</code> },
     ]} /><Button variant="primary" busy={plan.isPending} disabled={!selected.length} onClick={() => { void makePlan(selected) }}><Download size={16} />Plan {selected.length} selected {selected.length === 1 ? 'mod' : 'mods'}</Button></>}</QueryState>}</Section>}
-    {plan.error && <ErrorNotice error={plan.error} />}{plan.data && <Section title="Reviewed content plan"><PlanView plan={plan.data} />{plan.data.actions.length > 0 && <DataTable label="Planned mod changes" rows={plan.data.actions} rowKey={action => `${action.project_id}-${action.filename}`} columns={[{ header: 'Project', render: action => action.name }, { header: 'From', render: action => action.from_version || 'Not installed' }, { header: 'To', render: action => action.to_version }, { header: 'Reason', render: action => action.reason }]} />}{plan.data.blocked.length > 0 && <Notice tone="warning"><strong>The plan is blocked</strong><ul>{plan.data.blocked.map(reason => <li key={reason}>{reason}</li>)}</ul></Notice>}{plan.data.actions.length === 0 && <Notice>No compatible changes are planned. Nothing has been applied.</Notice>}<Button variant="primary" disabled={!allowed || !!plan.data.blocked.length || !plan.data.actions.length || operation.isSuccess} busy={operation.isPending} onClick={() => { void apply() }}>Apply reviewed plan</Button></Section>}
+    {plan.error && <ErrorNotice error={plan.error} />}{plan.data && <Section title="Reviewed content plan"><ModPlanContents plan={plan.data} /><Button variant="primary" disabled={!allowed || !!plan.data.blocked.length || !plan.data.actions.length || operation.isSuccess} busy={operation.isPending} onClick={() => { void apply() }}>Apply reviewed plan</Button></Section>}
+    {allowed && <ServerModpack instance={instance} />}
     <Section title="Update policy" description="Automatic changes are opt-in and limited to compatible managed content."><QueryState query={policy}>{data => <SubmitForm onSubmit={async form => {
       const body = { mode: String(form.get('mode')), interval_hours: Number(form.get('interval_hours')), window_start: String(form.get('window_start')), window_end: String(form.get('window_end')), timezone: String(form.get('timezone')), postpone_players: form.get('postpone_players') === 'on' }
       if (body.mode === 'automatic-safe' && !await confirm({ title: 'Enable unattended compatible updates?', body: <p>Managed, unpinned mods may be updated during the maintenance window after safety checks and a backup. Unknown content is preserved. Choose whether to postpone while players are online.</p>, action: 'Enable automatic-safe updates', danger: true })) return
