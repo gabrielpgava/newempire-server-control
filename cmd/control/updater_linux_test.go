@@ -31,7 +31,10 @@ func panelDataFixture(t *testing.T) config.Config {
 	}
 	c := config.Default()
 	c.DataDir = t.TempDir()
+	updaterMust(t, os.Chmod(c.DataDir, 0700))
 	updaterMust(t, os.Chown(c.DataDir, 1000, 1000))
+	c.InstallDir = t.TempDir()
+	updaterMust(t, os.Mkdir(filepath.Join(c.InstallDir, "updates"), 0700))
 	c.SourcePath = filepath.Join(t.TempDir(), "config.json")
 	updaterMust(t, os.WriteFile(c.SourcePath, []byte(`{"listen":"127.0.0.1:8080"}`), 0640))
 	return c
@@ -115,6 +118,7 @@ func TestPanelSnapshotRestoreKeepsUnprivilegedFileOwners(t *testing.T) {
 		updaterMust(t, os.Chown(filepath.Join(c.DataDir, name), 1000, 1000))
 	}
 	dest := t.TempDir()
+	updaterMust(t, os.Chmod(dest, 0700))
 	updaterMust(t, snapshotPanel(context.Background(), c, dest))
 	_, err = os.Stat(filepath.Join(dest, "panel.db"))
 	updaterMust(t, err)

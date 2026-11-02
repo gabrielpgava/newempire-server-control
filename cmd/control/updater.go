@@ -37,7 +37,29 @@ func (s panelService) StopPanel(ctx context.Context) error {
 	return systemctl(ctx, "stop", "new-empire-control.service")
 }
 func (s panelService) RestartPanel(ctx context.Context) error {
-	return systemctl(ctx, "restart", "new-empire-control.service")
+	return restartCheckedPanel(ctx, s.config, func() error {
+		return systemctl(ctx, "restart", "new-empire-control.service")
+	})
+}
+func restartCheckedPanel(ctx context.Context, c config.Config, restart func() error) error {
+	err := func() error {
+		data, err := os.OpenRoot(c.DataDir)
+		if err != nil {
+			return err
+		}
+		defer data.Close()
+		release, err := lockPanelData(data)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return checkPanelSchemaCopy(ctx, c, data)
+	}()
+	if err != nil {
+		return fmt.Errorf("panel restart refused; keep the panel stopped for manual recovery: %w", err)
+	}
+	// Startup must acquire panel.lock itself, after the schema check releases it.
+	return restart()
 }
 func installedVersion(c config.Config) (string, error) {
 	target, err := os.Readlink(filepath.Join(c.InstallDir, "current"))
@@ -292,12 +314,112 @@ func copySnapshotFile(ctx context.Context, source *os.Root, name string, dest *o
 		return err
 	}
 	defer in.Close()
+	before, err := in.Stat()
+	if err != nil {
+		return err
+	}
 	out, err := dest.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	_, err = files.Copy(ctx, out, in, 8<<30, nil)
-	return errors.Join(err, out.Sync(), out.Close())
+	n, copyErr := files.Copy(ctx, out, in, 8<<30, nil)
+	after, statErr := source.Lstat(name)
+	if statErr == nil && (!os.SameFile(before, after) || copyErr == nil && n != before.Size() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || before.Mode() != after.Mode()) {
+		statErr = errors.New("snapshot source changed while copying")
+	}
+	return errors.Join(copyErr, statErr, out.Sync(), out.Close())
+}
+
+// The caller holds panel.lock; SQLite only opens the private updater-owned copy.
+func copyPanelDatabase(ctx context.Context, source, dest *os.Root) (*database.Store, error) {
+	private, err := dest.Stat(".")
+	if err != nil {
+		return nil, err
+	}
+	privateStat, ok := private.Sys().(*syscall.Stat_t)
+	if !ok || !private.IsDir() || privateStat.Uid != 0 || private.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("panel database copies require private root-owned updater storage")
+	}
+	owner, err := source.Stat(".")
+	if err != nil {
+		return nil, err
+	}
+	ownerStat, ok := owner.Sys().(*syscall.Stat_t)
+	if !ok || !owner.IsDir() || owner.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("panel database source must be a private directory")
+	}
+	suffixes := []string{"", "-wal", "-shm", "-journal"}
+	before := make([]os.FileInfo, len(suffixes))
+	for n, suffix := range suffixes {
+		info, err := files.Check(source, "panel.db"+suffix)
+		if suffix != "" && errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.Mode().IsRegular() || stat.Uid != ownerStat.Uid || info.Mode().Perm()&0077 != 0 || info.Size() > 8<<30 || suffix == "" && info.Size() < 100 {
+			return nil, fmt.Errorf("panel.db%s must be a bounded private regular file owned by its directory account", suffix)
+		}
+		before[n] = info
+		// Rebuild the WAL index in private storage instead of trusting shared memory.
+		if suffix != "-shm" {
+			if err := copySnapshotFile(ctx, source, "panel.db"+suffix, dest, "source.db"+suffix); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for n, suffix := range suffixes {
+		after, err := source.Lstat("panel.db" + suffix)
+		if before[n] == nil && errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		stat, ok := after.Sys().(*syscall.Stat_t)
+		if before[n] == nil || !ok || stat.Uid != ownerStat.Uid || stat.Nlink != 1 || !os.SameFile(before[n], after) || before[n].Size() != after.Size() || !before[n].ModTime().Equal(after.ModTime()) || before[n].Mode() != after.Mode() {
+			return nil, errors.New("panel database or sidecars changed while copying")
+		}
+	}
+	return database.OpenExisting(filepath.Join(dest.Name(), "source.db"))
+}
+
+func checkPanelSchemaCopy(ctx context.Context, c config.Config, source *os.Root) (resultErr error) {
+	path := filepath.Join(c.InstallDir, "updates")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || stat.Uid != 0 || info.Mode().Perm()&0077 != 0 {
+		return errors.New("schema checks require private root-owned updater storage")
+	}
+	parent, err := os.OpenRoot(path)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	opened, err := parent.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return errors.Join(err, errors.New("updater storage changed while opening"))
+	}
+	name := ".schema-" + model.NewID()
+	if err := parent.Mkdir(name, 0700); err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, parent.RemoveAll(name)) }()
+	dest, err := parent.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	defer dest.Close()
+	db, err := copyPanelDatabase(ctx, source, dest)
+	if err != nil {
+		return err
+	}
+	return db.Close()
 }
 func snapshotPanel(ctx context.Context, c config.Config, dir string) error {
 	dest, err := os.OpenRoot(dir)
@@ -315,18 +437,7 @@ func snapshotPanel(ctx context.Context, c config.Config, dir string) error {
 		return err
 	}
 	defer release()
-	// Recover committed WAL pages in a private copy, never open a panel-controlled SQLite path as root.
-	if err := copySnapshotFile(ctx, data, "panel.db", dest, "source.db"); err != nil {
-		return err
-	}
-	if _, err := data.Lstat("panel.db-wal"); err == nil {
-		if err := copySnapshotFile(ctx, data, "panel.db-wal", dest, "source.db-wal"); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	db, err := database.Open(filepath.Join(dir, "source.db"))
+	db, err := copyPanelDatabase(ctx, data, dest)
 	if err != nil {
 		return err
 	}
@@ -338,7 +449,7 @@ func snapshotPanel(ctx context.Context, c config.Config, dir string) error {
 	if err := errors.Join(integrityErr, closeErr); err != nil {
 		return err
 	}
-	for _, name := range []string{"source.db", "source.db-wal", "source.db-shm"} {
+	for _, name := range []string{"source.db", "source.db-wal", "source.db-shm", "source.db-journal"} {
 		if err := dest.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -408,7 +519,20 @@ func restorePanel(ctx context.Context, c config.Config, dir string) error {
 		return err
 	}
 	defer release()
-	for _, name := range []string{"panel.db-wal", "panel.db-shm"} {
+	if err := checkPanelSchemaCopy(ctx, c, data); err != nil {
+		return fmt.Errorf("installed panel database prevents automatic restore: %w", err)
+	}
+	if err := checkPanelSchemaCopy(ctx, c, source); err != nil {
+		return fmt.Errorf("panel snapshot database prevents automatic restore: %w", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := source.Lstat("panel.db" + suffix); err == nil {
+			return errors.New("panel recovery snapshot must contain a standalone database without SQLite sidecars")
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	for _, name := range []string{"panel.db-wal", "panel.db-shm", "panel.db-journal"} {
 		if err := data.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
