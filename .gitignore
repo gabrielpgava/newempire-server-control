@@ -1,0 +1,15 @@
+/data/
+/dist/
+/bin/
+/.worktrees/
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+*.db
+*.db-shm
+*.db-wal
+.env
+*.key
+coverage.out
+.DS_Store
