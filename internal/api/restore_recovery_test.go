@@ -51,6 +51,18 @@ func runRestoreReconciliation(t *testing.T, h *harness, previous, confirm bool) 
 	return h.wait(t, queued.ID)
 }
 
+func TestRestoreGuardFailsClosedForIncompleteRecords(t *testing.T) {
+	h := newHarness(t, nil)
+	for _, record := range []any{nil, map[string]string{}, map[string]string{"backup_id": ""}} {
+		if err := h.app.saveSetting(t.Context(), "restore-pending:"+h.instance.ID, record); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.app.checkRestorePending(t.Context(), h.instance.ID); err == nil {
+			t.Fatal("incomplete pending metadata bypassed the restore guard")
+		}
+	}
+}
+
 func TestInterruptedRestoreBlocksUnsafeStartAndVerifiesReconciliation(t *testing.T) {
 	h, _ := interruptedRestore(t)
 	base := "/instances/" + h.instance.ID

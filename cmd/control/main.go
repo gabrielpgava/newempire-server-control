@@ -268,7 +268,12 @@ func output(value any) error {
 func doctor(c config.Config) error {
 	checks := map[string]any{"public_url": c.PublicURL, "data_dir": c.DataDir, "instance_dir": c.InstanceDir, "backup_dir": c.BackupDir, "java_allowlist": c.JavaPaths, "runtime_helper": c.RuntimeHelper, "version": version}
 	if _, err := os.Stat(filepath.Join(c.DataDir, "panel.db")); err == nil {
-		db, err := database.Open(filepath.Join(c.DataDir, "panel.db"))
+		release, err := lock.Acquire(filepath.Join(c.DataDir, "panel.lock"))
+		if err != nil {
+			return fmt.Errorf("stop the panel before offline database diagnostics; do not remove panel.lock: %w", err)
+		}
+		defer release()
+		db, err := database.OpenExisting(filepath.Join(c.DataDir, "panel.db"))
 		if err != nil {
 			return err
 		}

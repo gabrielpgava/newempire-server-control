@@ -23,6 +23,8 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Keep interrupted full-tree restores blocked until explicitly selected data and runtime metadata are reconciled against a verified snapshot; never automatically replace a world during reconciliation.
 - Verify retained runtime recovery against the original snapshot, preserve displaced data, and latch world-format review before metadata replacement.
 - Normalize reviewed imported server roots and preserve adoption identities across permission-preparation retries, with static launcher identity and authoritative Java preflight.
+- Keep updater state root-private, publish umask-safe operation reports, preserve panel-lock ownership, reuse staged releases, and reconcile only final interrupted operations.
+- Preserve local editor drafts through failed refreshes and require confirmation across navigation, instance changes, sign-out and supported browser unloads.
 - Block conflicting edits while content readiness/recovery is pending, reject duplicate mod adoption, and preserve unmanaged mods during automatic-safe maintenance.
 - Redact known RCON credentials from console/player job output and errors.
 - Include older conventional commit subjects in release planning even when the newest commit is documentation or a smaller repair.

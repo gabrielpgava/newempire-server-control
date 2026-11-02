@@ -13,6 +13,7 @@ A browser-based control panel for headless Minecraft Java/Fabric servers. Go ser
 - Verified backups, restore previews, world selection, server properties, and player access controls.
 - Fabric/Java metadata and Modrinth inventory, dependency plans, pins, and opt-in update policies.
 - Schedules, metrics, notification configuration, and signed panel-update workflows.
+- Locked offline backups/recovery and emergency owner access when the HTTP panel is unavailable.
 
 These describe the source modules and API, **not a claim that every workflow has passed real-host acceptance**. See [known verification gaps](docs/acceptance.md#remaining-release-gates). Fabric mods are not Paper/Purpur plugins; there is no tested plugin provider or Docker server-runtime adapter.
 
@@ -46,7 +47,7 @@ go build -o new-empire-control ./cmd/control
 ./new-empire-control doctor
 ```
 
-`doctor` reports configuration, database integrity when initialized, and whether the helper exists. Helper existence is not proof that systemd permissions, firewall isolation, or Minecraft readiness work.
+`doctor` reports configuration, database integrity when initialized, and whether the helper exists. For initialized state it requires the panel to be stopped and takes `panel.lock`; it never initializes an empty database or runs migrations. Helper existence is not proof that systemd permissions, firewall isolation, or Minecraft readiness work.
 
 ## Native Linux deployment
 
@@ -79,7 +80,7 @@ unset PANEL_PASSWORD
 ./new-empire-control backup verify INSTANCE_ID BACKUP_ID
 ```
 
-The protected CLI session is stored in the configured data directory. The login command currently has no TOTP-code option; use the browser when TOTP is enabled. For shells without `read -s -p`, supply a password-manager pipe to `--password-stdin` instead.
+The protected CLI session is stored in the configured data directory. TOTP accounts can add `--code CODE`, or `--code-stdin` to read a password line followed by a six-digit code line. For shells without `read -s -p`, supply a password-manager pipe to `--password-stdin` instead. Requests never follow redirects: use the exact configured origin.
 
 Before restoring, inspect the authenticated backup preview in the browser or API. Only then run:
 
@@ -88,6 +89,17 @@ Before restoring, inspect the authenticated backup preview in the browser or API
 ```
 
 Mutation commands returning a job do not wait for success. Follow that job in the panel or `GET /api/v1/jobs/{jobID}`; HTTP 202 means **accepted**, not completed. Do not retry destructive work merely because a browser or CLI connection was interrupted.
+
+For offline operation, stop only the panel and run as its unprivileged service account with the same configuration. These commands require existing initialized state and matching encryption material; they hold `panel.lock`, never initialize/migrate state, execute only their selected job and leave Minecraft stopped:
+
+```sh
+./new-empire-control backup --offline create INSTANCE_ID
+./new-empire-control backup --offline preview INSTANCE_ID BACKUP_ID
+./new-empire-control backup --offline --confirm restore INSTANCE_ID BACKUP_ID
+./new-empire-control recover list INSTANCE_ID
+```
+
+Minecraft must already be proven stopped for offline mutations; panel downtime does not prove that. The [disaster-recovery guide](docs/disaster-recovery.md) explains explicit retained-data recovery, pending-restore reconciliation, runtime recovery without world rollback, and confirmed owner credential recovery. Never delete a held lock or clear recovery guards by editing SQLite.
 
 ## API and documentation
 

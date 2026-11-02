@@ -20,11 +20,11 @@ type restoreRecovery struct {
 }
 
 func (a *App) checkRestorePending(ctx context.Context, id string) error {
-	var pending restoreRecovery
-	if err := a.setting(ctx, "restore-pending:"+id, &pending); err != nil {
+	var pending bool
+	if err := a.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM settings WHERE key=?)", "restore-pending:"+id).Scan(&pending); err != nil {
 		return err
 	}
-	if pending.BackupID != "" {
+	if pending {
 		return errors.New("an interrupted restore requires explicit offline reconciliation before starting Minecraft or changing files; inspect its retained recovery report")
 	}
 	return nil

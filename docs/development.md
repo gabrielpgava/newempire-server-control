@@ -27,8 +27,8 @@ native releases contain the UI and require no Node.js runtime. Build output and
 data directories are ignored by Git. Do not commit generated private material.
 
 `make check` fails on missing mandatory files, missing frontend scripts or an
-ambiguous OpenAPI file. Keep exactly one of `docs/openapi.json`,
-`docs/openapi.yaml`, or `docs/openapi.yml`; Redocly performs structural and
+ambiguous OpenAPI file. Keep exactly one of `docs/api/openapi.json`,
+`docs/api/openapi.yaml`, or `docs/api/openapi.yml`; Redocly performs structural and
 reference validation. Go tests include versioned migrations and the security
 regressions present in each domain. Lockfiles must not drift during checks.
 

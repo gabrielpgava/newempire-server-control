@@ -71,9 +71,9 @@ func TestIsolatedRootsAndCrossPortCollision(t *testing.T) {
 }
 
 func TestCollisionPreflightRejectsIPv6OnlyListener(t *testing.T) {
-	listener, err := net.Listen("tcp6", "[::1]:0")
+	listener, err := net.Listen("tcp6", "[::]:0")
 	if err != nil {
-		t.Skip("IPv6 loopback is unavailable:", err)
+		t.Skip("IPv6 is unavailable:", err)
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
