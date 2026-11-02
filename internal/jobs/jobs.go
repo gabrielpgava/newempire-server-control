@@ -227,13 +227,13 @@ func (e *Engine) Start(ctx context.Context, workers int) error {
 }
 func (e *Engine) Wait() { e.wg.Wait() }
 
-func (e *Engine) claim(ctx context.Context) (Job, error) {
+func (e *Engine) claim(ctx context.Context, id string) (Job, error) {
 	tx, err := e.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, err
 	}
 	defer tx.Rollback()
-	j, err := scan(tx.QueryRowContext(ctx, "SELECT "+jobColumns+" FROM jobs j WHERE state='queued' AND available_at<=? AND NOT EXISTS(SELECT 1 FROM jobs r WHERE r.state='running' AND (r.instance_id=j.instance_id OR r.instance_id='' OR j.instance_id='')) ORDER BY priority DESC,created_at,rowid LIMIT 1", time.Now().Unix()))
+	j, err := scan(tx.QueryRowContext(ctx, "SELECT "+jobColumns+" FROM jobs j WHERE state='queued' AND available_at<=? AND (?='' OR j.id=?) AND NOT EXISTS(SELECT 1 FROM jobs r WHERE r.state='running' AND (r.instance_id=j.instance_id OR r.instance_id='' OR j.instance_id='')) ORDER BY priority DESC,created_at,rowid LIMIT 1", time.Now().Unix(), id, id))
 	if err != nil {
 		return j, err
 	}
@@ -245,6 +245,23 @@ func (e *Engine) claim(ctx context.Context) (Job, error) {
 	return j, tx.Commit()
 }
 
+// RunOne executes only the selected queued job. Offline callers must hold the panel process lock.
+// Handler failures remain in the returned Job; claim or storage failures return an error.
+func (e *Engine) RunOne(ctx context.Context, id string) (Job, error) {
+	if !model.ValidID(id) {
+		return Job{}, errors.New("invalid job identifier")
+	}
+	j, err := e.claim(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, errors.New("selected job is not queued and ready, or conflicts with a running job")
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	e.run(ctx, j)
+	return e.Get(ctx, id)
+}
+
 func (e *Engine) worker(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -252,7 +269,7 @@ func (e *Engine) worker(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		j, err := e.claim(ctx)
+		j, err := e.claim(ctx, "")
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) && ctx.Err() == nil {
 				slog.Error("claim job", "error", err)
