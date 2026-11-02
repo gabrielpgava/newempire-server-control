@@ -39,6 +39,8 @@ This file is binding guidance for every coding agent contributing to this reposi
 7. Keep backups outside managed instance directories and protect them against ordinary file-manager deletion.
 8. Enforce safe relative paths and race-resistant filesystem access. Reject traversal, unsafe archive links, ZIP bombs, filesystem escapes, and access outside allowlisted roots.
 
+Full-tree restores persist `restore-pending:<instanceID>` before the data swap. Starts and subsequent mutations must stay blocked if filesystem, helper, or database completion is ambiguous. Clear this guard only after successful completion or an explicitly confirmed offline reconciliation that hashes the selected current tree against its verified snapshot; a terminal job alone is not proof of consistency.
+
 ## Security requirements
 
 - Use least-privilege accounts and service permissions. The Go web process must not run with general root privileges.

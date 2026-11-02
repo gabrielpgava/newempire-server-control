@@ -249,6 +249,9 @@ func (a *App) registerBackupJobs() {
 		if err != nil {
 			return nil, err
 		}
+		if err := a.checkRestorePending(ctx, i.ID); err != nil {
+			return nil, err
+		}
 		status, err := a.runtimeStatus(ctx, i)
 		if err != nil {
 			return nil, err
@@ -343,6 +346,9 @@ func (a *App) registerBackupJobs() {
 		if err != nil {
 			return nil, err
 		}
+		if err := a.checkRestorePending(ctx, i.ID); err != nil {
+			return nil, err
+		}
 		storage, err := a.backupRoot(i.ID)
 		if err != nil {
 			return nil, err
@@ -390,38 +396,28 @@ func (a *App) registerBackupJobs() {
 		if err := a.assertStopped(ctx, i); err != nil {
 			return nil, err
 		}
+		recovery := restoreRecovery{BackupID: body.BackupID, PreRestoreBackupID: before.ID, Previous: i, Restored: restoredInstance, Stage: stage.Name}
+		if err := a.saveSetting(ctx, "restore-pending:"+i.ID, recovery); err != nil {
+			return nil, err
+		}
 		if err := t.CommitBarrier(ctx); err != nil {
 			return nil, err
 		}
 		restored, restoreErr := backups.CommitRestore(ctx, parent, target, stage.Name)
+		recovery.Restore = restored
+		saveErr := a.saveSetting(context.WithoutCancel(ctx), "restore-pending:"+i.ID, recovery)
 		result := map[string]any{"restore": restored, "pre_restore_backup_id": before.ID, "state": "offline", "note": "Minecraft remains stopped so you can review restored runtime/content before starting."}
-		if restoreErr != nil {
+		if restoreErr != nil || saveErr != nil {
 			a.notify(ctx, "restore_failed", i.ID, t.Job.ID)
-			return result, restoreErr
+			return result, errors.Join(restoreErr, saveErr)
 		}
-		if restoredInstance.JavaPath != i.JavaPath || restoredInstance.Jar != i.Jar || restoredInstance.MemoryMB != i.MemoryMB {
-			if err := a.provision(ctx, restoredInstance, true); err != nil {
-				return result, err
-			}
-		}
-		if err := a.Instances.Update(ctx, restoredInstance); err != nil {
+		if err := a.finishBackupRestore(ctx, i, restoredInstance, body.BackupID); err != nil {
 			return result, err
-		}
-		if _, err := a.DB.ExecContext(ctx, "DELETE FROM settings WHERE key=?", "runtime-pending:"+i.ID); err != nil {
-			return result, err
-		}
-		var review string
-		if err := a.setting(ctx, "runtime-world-review:"+i.ID, &review); err != nil {
-			return result, err
-		}
-		if review == body.BackupID {
-			if _, err := a.DB.ExecContext(ctx, "DELETE FROM settings WHERE key=?", "runtime-world-review:"+i.ID); err != nil {
-				return result, err
-			}
 		}
 		a.notify(ctx, "restore_succeeded", i.ID, t.Job.ID)
 		return result, nil
 	})
+	a.Jobs.Register("restore_reconcile", 0, a.reconcileRestoreJob)
 }
 
 func backupExtension(b backups.Backup) string {

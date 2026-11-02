@@ -290,6 +290,20 @@ func (a *App) registerSettingsJobs() {
 		if p.KeepLast < 1 || p.KeepLast > 10000 {
 			return nil, errors.New("invalid retention policy; no backups were removed")
 		}
+		if err := a.checkRestorePending(ctx, t.Job.InstanceID); err != nil {
+			return map[string]int{"removed": 0}, err
+		}
+		var pending runtimeRecovery
+		var review string
+		if err := a.setting(ctx, "runtime-pending:"+t.Job.InstanceID, &pending); err != nil {
+			return nil, err
+		}
+		if err := a.setting(ctx, "runtime-world-review:"+t.Job.InstanceID, &review); err != nil {
+			return nil, err
+		}
+		if pending.Directory != "" || review != "" {
+			return map[string]int{"removed": 0}, errors.New("backup retention is paused while runtime or world recovery requires its restore points")
+		}
 		root, err := a.backupRoot(t.Job.InstanceID)
 		if err != nil {
 			return nil, err

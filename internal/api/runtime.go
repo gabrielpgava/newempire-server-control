@@ -268,6 +268,9 @@ func (a *App) restoreRuntime(ctx context.Context, i model.Instance, recovery run
 	return err
 }
 func (a *App) prepareRuntimeStart(ctx context.Context, i model.Instance) error {
+	if err := a.checkRestorePending(ctx, i.ID); err != nil {
+		return err
+	}
 	var review string
 	if err := a.setting(ctx, "runtime-world-review:"+i.ID, &review); err != nil {
 		return err

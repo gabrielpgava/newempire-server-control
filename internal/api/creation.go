@@ -173,6 +173,9 @@ func (a *App) selection(ctx context.Context, game, loader, installer string) (fa
 }
 
 func (a *App) prepareOffline(ctx context.Context, i model.Instance) error {
+	if err := a.checkRestorePending(ctx, i.ID); err != nil {
+		return err
+	}
 	if err := a.assertStopped(ctx, i); err != nil {
 		return err
 	}

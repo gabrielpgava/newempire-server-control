@@ -240,6 +240,9 @@ func (a *App) registerFileJobs() {
 		if err != nil {
 			return nil, err
 		}
+		if err := a.checkRestorePending(ctx, i.ID); err != nil {
+			return nil, err
+		}
 		if err := a.assertStopped(ctx, i); err != nil {
 			return nil, err
 		}
