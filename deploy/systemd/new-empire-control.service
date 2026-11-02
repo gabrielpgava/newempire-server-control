@@ -1,0 +1,28 @@
+[Unit]
+Description=New Empire Server Control
+After=network.target
+
+[Service]
+Type=simple
+User=new-empire-control
+Group=new-empire-control
+WorkingDirectory=/var/lib/new-empire-control
+ExecStart=/opt/new-empire-control/control serve --config /etc/new-empire-control/config.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=120s
+UMask=0007
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/new-empire-control /srv/new-empire/instances /opt/new-empire-control/updates /etc /var/log
+# /etc and /var/log remain protected by Unix ownership; the root helper needs
+# them for its validated registrations, units and dedicated account creation.
+# sudo needs privilege elevation. Do not set NoNewPrivileges, cap bounding or
+# seccomp options here; they would silently disable the restricted runtime helper.
+NoNewPrivileges=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
