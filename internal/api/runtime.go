@@ -217,14 +217,19 @@ func (a *App) restoreRuntime(ctx context.Context, i model.Instance, recovery run
 		return err
 	}
 	defer stageBase.Close()
-	if !strings.HasPrefix(recovery.Directory, "runtime-recovery-") || !model.ValidID(strings.TrimPrefix(recovery.Directory, "runtime-recovery-")) {
-		return errors.New("invalid retained runtime recovery directory")
+	if err := validRuntimeRecoveryDirectory(recovery.Directory); err != nil {
+		return err
 	}
 	old, err := stageBase.OpenRoot(recovery.Directory)
 	if err != nil {
 		return err
 	}
 	defer old.Close()
+	if recovery.Previous.MinecraftVersion != i.MinecraftVersion {
+		if err := a.saveSetting(ctx, "runtime-world-review:"+i.ID, recovery.BackupID); err != nil {
+			return err
+		}
+	}
 	if err := atomicBinary(ctx, old, "launcher.jar", root, recovery.Previous.Jar, fabric.MaxLauncherBytes); err != nil {
 		return err
 	}
@@ -259,13 +264,15 @@ func (a *App) restoreRuntime(ctx context.Context, i model.Instance, recovery run
 	if err := a.Instances.Update(ctx, previous); err != nil {
 		return err
 	}
-	if previous.MinecraftVersion != i.MinecraftVersion {
-		if err := a.saveSetting(ctx, "runtime-world-review:"+i.ID, recovery.BackupID); err != nil {
-			return err
-		}
-	}
 	_, err = a.DB.ExecContext(ctx, "DELETE FROM settings WHERE key=?", "runtime-pending:"+i.ID)
 	return err
+}
+
+func validRuntimeRecoveryDirectory(name string) error {
+	if !strings.HasPrefix(name, "runtime-recovery-") || !model.ValidID(strings.TrimPrefix(name, "runtime-recovery-")) {
+		return errors.New("invalid retained runtime recovery directory")
+	}
+	return nil
 }
 func (a *App) prepareRuntimeStart(ctx context.Context, i model.Instance) error {
 	if err := a.checkRestorePending(ctx, i.ID); err != nil {
