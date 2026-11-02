@@ -69,9 +69,24 @@ credentials and encryption material: do not expose them as ordinary downloads.
 All updater processes must share the same filesystem lock and journal. Local
 filesystems must support advisory locking, atomic rename, directory fsync, and
 relative symlinks; do not assume those semantics on network filesystems.
+The native installer creates `updates/` as **root:root 0700**, not panel-owned.
+The root updater rejects a journal, lock, staging directory, snapshot directory,
+or file that is not controlled by its account before trusting that path. Existing
+panel-owned updater state is not migrated by chown: preserve it outside the
+active install, review it offline, and provision a fresh root-owned updater
+directory. Never promote an untrusted old journal or snapshot into trusted state.
+
+The panel reads only the bounded, root-owned `panel-update-report.json` in its
+own private data directory; it does not open the private updater journal. Reports
+are explicitly chmodded to `0644` even under the oneshot's `0077` umask. They bind
+the request/job, operation and selected version to the journal result. Missing
+first-run reports mean idle; invalid/unreadable reports mean unavailable, not a
+successful or unknown update. Snapshot secrets remain in root-private storage.
 After restoration, reconcile durable panel-update jobs with the updater journal;
 the restored SQLite snapshot may contain an interrupted apply job that must not
 be blindly resubmitted.
+Reconciliation uses the root report, only finishes interrupted jobs, and never
+finishes an automatic check from a successful intermediate staging report.
 
 ## Check, stage, apply
 
@@ -98,6 +113,19 @@ be blindly resubmitted.
    and verified database/configuration snapshot, then restarts/checks the old
    panel. The operation still returns an error explaining that it rolled back.
 
+Automatic maintenance reuses a matching staged version/channel for the current
+installation, including after postponement. The root staging adapter also reuses
+that transaction if a report was lost; it does not download another identical
+artifact. Immediately before apply, the panel reloads the policy and checks the
+channel, maintenance window and postponement deadline again. Disabling or
+postponing maintenance during staging leaves the verified stage unapplied.
+
+A failed automatic stage/apply latches that version until administrator review
+and a successful explicit manual stage. A root failure report restores the latch
+after a panel database rollback/restart. A different newer release is not blocked
+by the old version's latch. Retained failed installation directories still
+require the offline review described below; retry never overwrites them.
+
 Apply/recovery never invokes shell commands or a Minecraft runtime adapter. The
 service adapter must target a fixed panel unit and may not accept arbitrary unit
 names, paths, or commands from a request.
@@ -115,6 +143,11 @@ snapshotting. If the panel was already stopped, it is restarted safely before
 reporting cancellation. Once a verified snapshot is ready and installation
 begins, the helper finishes installation or recovery using a separate bounded
 context; killing that process is not safe cancellation.
+Snapshot/restore adapters require the existing regular, single-link `panel.lock`
+owned by the panel data-directory account. They never create it as root. A missing
+or unsafe lock aborts before copying/restoring state; a normal panel start creates
+a missing lock as the panel account. Review and repair a legacy root-owned lock
+offline rather than making it broadly writable.
 
 `Status` returns the durable transaction, last successful update, and transition
 history. States include `downloading`, `staged`, `stopping`, `snapshotting`,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,10 +31,36 @@ func (m *Manager) openInstall() (*os.Root, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open panel install directory: %w", err)
 	}
-	if !info.IsDir() || info.Mode().Perm()&0022 != 0 {
-		return nil, problem(ErrUnavailable, "panel install directory must be a real directory without group/world write access")
+	if !info.IsDir() || !owned(info) {
+		return nil, problem(ErrUnavailable, "panel install directory must be controlled by the updater account")
 	}
-	return os.OpenRoot(m.opts.InstallDir)
+	r, err := os.OpenRoot(m.opts.InstallDir)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := r.Stat(".")
+	if err == nil && !os.SameFile(info, opened) {
+		err = problem(ErrUnavailable, "panel install directory changed while opening")
+	}
+	if err == nil {
+		info, statErr := r.Lstat("updates")
+		if statErr == nil && (!info.IsDir() || !owned(info) || info.Mode().Perm()&0077 != 0) {
+			err = problem(ErrUnavailable, "updater state must be private and controlled by the updater account")
+		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			err = statErr
+		}
+	}
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
+func owned(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid()) && info.Mode().Perm()&0022 == 0 &&
+		(info.IsDir() || info.Mode().IsRegular() && stat.Nlink == 1)
 }
 
 func ensureDir(r *os.Root, name string, mode os.FileMode) error {
@@ -45,7 +72,7 @@ func ensureDir(r *os.Root, name string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode().Perm()&0022 != 0 || mode == 0700 && info.Mode().Perm()&0077 != 0 {
+	if !info.IsDir() || !owned(info) || mode == 0700 && info.Mode().Perm()&0077 != 0 {
 		return problem(ErrUnavailable, "%s must be a protected real directory", name)
 	}
 	if created == nil {
@@ -88,16 +115,44 @@ func (m *Manager) lock(ctx context.Context) (*lockedRoot, error) {
 }
 
 func regular(r *os.Root, name string, flags int, mode os.FileMode) (*os.File, error) {
+	if err := ownedDirs(r, path.Dir(name)); err != nil {
+		return nil, err
+	}
 	f, err := r.OpenFile(name, flags|unix.O_NOFOLLOW|unix.O_NONBLOCK, mode)
 	if err != nil {
 		return nil, err
 	}
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || !info.Mode().IsRegular() || !owned(info) {
 		f.Close()
 		return nil, fmt.Errorf("%s is not an accessible regular file", name)
 	}
 	return f, nil
+}
+
+func ownedDirs(r *os.Root, name string) error {
+	info, err := r.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || !owned(info) {
+		return problem(ErrUnavailable, "updater directory must be controlled by the updater account")
+	}
+	if name == "." {
+		return nil
+	}
+	current := ""
+	for _, part := range strings.Split(name, "/") {
+		current = path.Join(current, part)
+		info, err := r.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || !owned(info) {
+			return problem(ErrUnavailable, "updater directory must be real and controlled by the updater account: %s", current)
+		}
+	}
+	return nil
 }
 
 func syncDir(r *os.Root, dir string) error {

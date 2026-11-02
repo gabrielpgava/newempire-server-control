@@ -20,10 +20,10 @@ import (
 	"github.com/gabrielpgava/newempire-server-control/internal/config"
 	"github.com/gabrielpgava/newempire-server-control/internal/database"
 	"github.com/gabrielpgava/newempire-server-control/internal/files"
-	"github.com/gabrielpgava/newempire-server-control/internal/lock"
 	"github.com/gabrielpgava/newempire-server-control/internal/model"
 	"github.com/gabrielpgava/newempire-server-control/internal/panelupdate"
 	"github.com/gabrielpgava/newempire-server-control/internal/updates"
+	"golang.org/x/sys/unix"
 )
 
 type panelService struct{ config config.Config }
@@ -161,12 +161,15 @@ func independentUpdate(c config.Config, args []string) (resultErr error) {
 		action = request.Action
 		selected = request.Version
 		channel = request.Channel
-		if err := panelupdate.Publish(ctx, root, panelupdate.Report{RequestID: request.ID, JobID: request.JobID, State: "running"}); err != nil {
+		if err := panelupdate.Publish(ctx, root, panelupdate.Report{RequestID: request.ID, JobID: request.JobID, Action: action, Version: selected, State: "running"}); err != nil {
 			return err
 		}
 		defer func() {
 			journal, journalErr := manager.Status(context.Background())
-			report := panelupdate.Report{RequestID: request.ID, JobID: request.JobID, State: "succeeded", Journal: journal}
+			report := panelupdate.Report{RequestID: request.ID, JobID: request.JobID, Action: action, Version: selected, State: "succeeded", Journal: journal}
+			if report.Version == "" && journal.Transaction != nil {
+				report.Version = journal.Transaction.Version
+			}
 			if resultErr != nil {
 				report.State = "failed"
 				report.Error = resultErr.Error()
@@ -186,6 +189,8 @@ func independentUpdate(c config.Config, args []string) (resultErr error) {
 		if journal.Transaction != nil {
 			switch journal.Transaction.State {
 			case updates.Downloading, updates.Stopping, updates.Snapshotting, updates.Installing, updates.CheckingHealth, updates.RollingBack, updates.ManualRecovery:
+				action = "recover"
+				selected = journal.Transaction.Version
 				if err := manager.Recover(ctx); err != nil {
 					return err
 				}
@@ -203,15 +208,21 @@ func independentUpdate(c config.Config, args []string) (resultErr error) {
 		}
 		return output(checked)
 	case "stage":
-		if selected == "" {
-			return errors.New("independent staging requires a reviewed release version")
-		}
-		transaction, err := manager.Stage(ctx, selected, channel)
+		transaction, err := stagePanelUpdate(ctx, manager, current, selected, channel)
 		if err != nil {
 			return err
 		}
 		return output(transaction)
 	case "apply":
+		if selected != "" {
+			journal, err := manager.Status(ctx)
+			if err != nil {
+				return err
+			}
+			if t := journal.Transaction; t == nil || t.Version != selected || t.Channel != channel {
+				return errors.New("staged release changed after the automatic update request")
+			}
+		}
 		return manager.Apply(ctx)
 	case "rollback":
 		return manager.Rollback(ctx)
@@ -220,6 +231,20 @@ func independentUpdate(c config.Config, args []string) (resultErr error) {
 	default:
 		return errors.New("unsupported independent updater action")
 	}
+}
+
+func stagePanelUpdate(ctx context.Context, manager *updates.Manager, current, selected string, channel updates.Channel) (updates.Transaction, error) {
+	if selected == "" {
+		return updates.Transaction{}, errors.New("independent staging requires a reviewed release version")
+	}
+	journal, err := manager.Status(ctx)
+	if err != nil {
+		return updates.Transaction{}, err
+	}
+	if t := journal.Transaction; t != nil && t.State == updates.Staged && t.Version == selected && t.Channel == channel && t.PreviousVersion == current {
+		return *t, nil
+	}
+	return manager.Stage(ctx, selected, channel)
 }
 
 func validateUpdaterPaths(c config.Config) error {
@@ -275,11 +300,6 @@ func copySnapshotFile(ctx context.Context, source *os.Root, name string, dest *o
 	return errors.Join(err, out.Sync(), out.Close())
 }
 func snapshotPanel(ctx context.Context, c config.Config, dir string) error {
-	release, err := lock.Acquire(filepath.Join(c.DataDir, "panel.lock"))
-	if err != nil {
-		return err
-	}
-	defer release()
 	dest, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -290,6 +310,11 @@ func snapshotPanel(ctx context.Context, c config.Config, dir string) error {
 		return err
 	}
 	defer data.Close()
+	release, err := lockPanelData(data)
+	if err != nil {
+		return err
+	}
+	defer release()
 	// Recover committed WAL pages in a private copy, never open a panel-controlled SQLite path as root.
 	if err := copySnapshotFile(ctx, data, "panel.db", dest, "source.db"); err != nil {
 		return err
@@ -368,11 +393,6 @@ func replaceSnapshotFile(ctx context.Context, source *os.Root, name string, dest
 	return dir.Sync()
 }
 func restorePanel(ctx context.Context, c config.Config, dir string) error {
-	release, err := lock.Acquire(filepath.Join(c.DataDir, "panel.lock"))
-	if err != nil {
-		return err
-	}
-	defer release()
 	source, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -383,6 +403,11 @@ func restorePanel(ctx context.Context, c config.Config, dir string) error {
 		return err
 	}
 	defer data.Close()
+	release, err := lockPanelData(data)
+	if err != nil {
+		return err
+	}
+	defer release()
 	for _, name := range []string{"panel.db-wal", "panel.db-shm"} {
 		if err := data.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -404,4 +429,28 @@ func restorePanel(ctx context.Context, c config.Config, dir string) error {
 		}
 	}
 	return nil
+}
+
+func lockPanelData(data *os.Root) (func(), error) {
+	f, err := files.OpenRegular(data, "panel.lock")
+	if err != nil {
+		return nil, fmt.Errorf("open existing panel lock: %w", err)
+	}
+	info, err := f.Stat()
+	owner, ownerErr := data.Stat(".")
+	if err != nil || ownerErr != nil {
+		f.Close()
+		return nil, errors.Join(err, ownerErr)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	dataStat, dataOK := owner.Sys().(*syscall.Stat_t)
+	if !ok || !dataOK || stat.Uid != dataStat.Uid || info.Mode().Perm()&0022 != 0 {
+		f.Close()
+		return nil, errors.New("existing panel lock must belong to the panel data-directory owner and not be group/world writable")
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		f.Close()
+		return nil, errors.New("another panel or recovery operation holds the data-directory lock")
+	}
+	return func() { f.Close() }, nil
 }

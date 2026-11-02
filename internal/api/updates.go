@@ -33,6 +33,11 @@ type PanelPolicy struct {
 	PostponeUntil int64           `json:"postpone_until,omitempty"`
 }
 
+type panelUpdateFailure struct {
+	Version    string `json:"version"`
+	ReportTime int64  `json:"report_time"`
+}
+
 func defaultPanelPolicy() PanelPolicy {
 	return PanelPolicy{Mode: "notify", Channel: updates.Stable, IntervalHours: 24, WindowStart: "02:00", WindowEnd: "04:00", Timezone: "UTC"}
 }
@@ -76,28 +81,29 @@ func (a *App) updatesStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		out["available"] = map[string]any{"version": available.Available.Version, "notes": available.Notes, "size": size, "prerelease": available.Prerelease}
 	}
-	if _, err := a.updateManager(); err != nil {
+	report, err := a.updateReport(r.Context())
+	if err == nil {
+		out["history"] = report.Journal.History
+		out["state"] = report.State
+		if report.Journal.Transaction != nil && report.State != "running" {
+			out["state"] = report.Journal.Transaction.State
+		}
+		if report.State == "failed" {
+			if t := report.Journal.Transaction; t == nil || t.State != updates.Failed && t.State != updates.RolledBack && t.State != updates.ManualRecovery {
+				out["state"] = "failed"
+			}
+			out["detail"] = report.Error
+		}
+		if report.State == "running" {
+			out["detail"] = "Independent updater is executing the requested operation"
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		out["state"] = "unavailable"
 		out["detail"] = err.Error()
 	}
-	root, err := os.OpenRoot(a.Config.DataDir)
-	if err == nil {
-		defer root.Close()
-		report, reportErr := panelupdate.ReadReport(r.Context(), root)
-		if reportErr == nil {
-			out["history"] = report.Journal.History
-			if report.Journal.Transaction != nil {
-				out["state"] = report.Journal.Transaction.State
-			}
-			if report.State == "failed" {
-				out["detail"] = report.Error
-			}
-			if report.State == "running" {
-				out["detail"] = "Independent updater is executing the requested operation"
-			}
-		} else if !errors.Is(reportErr, fs.ErrNotExist) {
-			out["detail"] = reportErr.Error()
-		}
+	if _, err := a.updateManager(); err != nil {
+		out["state"] = "unavailable"
+		out["detail"] = err.Error()
 	}
 	respond(w, 200, out)
 }
@@ -172,18 +178,26 @@ func (a *App) handoffUpdate(ctx context.Context, t *jobs.Task, action, version s
 	if err := t.CommitBarrier(ctx); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", a.Config.RuntimeHelper, "panel-update")
-	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
-	if err := command.Run(); err != nil {
-		return errors.New("could not start the restricted independent updater; check the helper and systemd oneshot")
-	}
 	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
+	return waitUpdate(waitCtx, root, req.ID, func() error {
+		command := exec.CommandContext(waitCtx, "/usr/bin/sudo", "-n", a.Config.RuntimeHelper, "panel-update")
+		command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
+		if err := command.Run(); err != nil {
+			return errors.New("could not start the restricted independent updater; check the helper and systemd oneshot")
+		}
+		return nil
+	})
+}
+func waitUpdate(ctx context.Context, root *os.Root, requestID string, start func() error) error {
+	if err := start(); err != nil {
+		return err
+	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		report, err := panelupdate.ReadReport(waitCtx, root)
-		if err == nil && report.RequestID == req.ID {
+		report, err := panelupdate.ReadReport(ctx, root)
+		if err == nil && report.RequestID == requestID {
 			if report.State == "succeeded" {
 				return nil
 			}
@@ -191,21 +205,28 @@ func (a *App) handoffUpdate(ctx context.Context, t *jobs.Task, action, version s
 				return errors.New(report.Error)
 			}
 		}
+		if err == nil && report.RequestID != requestID && report.State != "running" {
+			// Starting an active oneshot does not queue the next request while it exits.
+			if err := start(); err != nil {
+				return err
+			}
+		}
 		select {
-		case <-waitCtx.Done():
+		case <-ctx.Done():
 			return errors.New("independent updater did not report completion; inspect its retained journal")
 		case <-ticker.C:
 		}
 	}
 }
 func (a *App) reconcileUpdates(ctx context.Context) {
-	root, err := os.OpenRoot(a.Config.DataDir)
-	if err != nil {
+	report, err := a.updateReport(ctx)
+	if err != nil || report.State == "running" {
 		return
 	}
-	defer root.Close()
-	report, err := panelupdate.ReadReport(ctx, root)
-	if err != nil || report.State == "running" {
+	if err := a.rememberUpdateFailure(ctx, report); err != nil {
+		return
+	}
+	if report.Action != "stage" && report.Action != "apply" && report.Action != "rollback" {
 		return
 	}
 	state := "succeeded"
@@ -213,7 +234,89 @@ func (a *App) reconcileUpdates(ctx context.Context) {
 		state = "failed"
 	}
 	b, _ := json.Marshal(report.Journal)
-	a.DB.ExecContext(ctx, "UPDATE jobs SET state=?,error=?,result=?,progress=CASE WHEN ?='succeeded' THEN 100 ELSE progress END,finished_at=? WHERE id=? AND kind LIKE 'panel_%' AND state IN ('interrupted','running')", state, report.Error, string(b), state, time.Now().Unix(), report.JobID)
+	finalCheck := report.Action == "apply" || report.Action == "stage" && report.State == "failed"
+	a.DB.ExecContext(ctx, "UPDATE jobs SET state=?,error=?,result=?,progress=CASE WHEN ?='succeeded' THEN 100 ELSE progress END,finished_at=? WHERE id=? AND state='interrupted' AND (kind=? OR (kind='panel_check' AND ?))", state, report.Error, string(b), state, time.Now().Unix(), report.JobID, "panel_"+report.Action, finalCheck)
+}
+func (a *App) updateReport(ctx context.Context) (panelupdate.Report, error) {
+	root, err := os.OpenRoot(a.Config.DataDir)
+	if err != nil {
+		return panelupdate.Report{}, err
+	}
+	defer root.Close()
+	return panelupdate.ReadReport(ctx, root)
+}
+func (a *App) rememberUpdateFailure(ctx context.Context, report panelupdate.Report) error {
+	if report.State == "failed" && report.Version != "" && (report.Action == "stage" || report.Action == "apply" || report.Action == "recover") {
+		at := report.UpdatedAt.UnixNano()
+		b, err := json.Marshal(panelUpdateFailure{Version: report.Version, ReportTime: at})
+		if err != nil {
+			return err
+		}
+		// Re-reading an old root report must not undo a manual reset or a newer local failure.
+		_, err = a.DB.ExecContext(ctx, "INSERT INTO settings(key,value) VALUES('updates-failure',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE coalesce(json_extract(settings.value,'$.report_time'),0)<?", string(b), at)
+		return err
+	}
+	return nil
+}
+func (a *App) setFailedUpdateVersion(ctx context.Context, version string) error {
+	b, err := json.Marshal(panelUpdateFailure{Version: version})
+	if err != nil {
+		return err
+	}
+	_, err = a.DB.ExecContext(ctx, "INSERT INTO settings(key,value) VALUES('updates-failure',?) ON CONFLICT(key) DO UPDATE SET value=json_set(settings.value,'$.version',?)", string(b), version)
+	return err
+}
+func (a *App) automaticUpdateAllowed(ctx context.Context, channel updates.Channel, now time.Time) (bool, error) {
+	p := defaultPanelPolicy()
+	if err := a.setting(ctx, "updates-policy", &p); err != nil {
+		return false, err
+	}
+	if err := p.Validate(); err != nil {
+		return false, err
+	}
+	inside, err := scheduler.InWindow(now, p.Timezone, p.WindowStart, p.WindowEnd)
+	return p.Mode == "automatic" && p.Channel == channel && inside && now.Unix() >= p.PostponeUntil, err
+}
+func (a *App) automaticPanelUpdate(ctx context.Context, version string, channel updates.Channel, now func() time.Time, handoff func(string, string) error) error {
+	allowed, err := a.automaticUpdateAllowed(ctx, channel, now())
+	if err != nil || !allowed {
+		return err
+	}
+	report, err := a.updateReport(ctx)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err == nil && report.State == "running" {
+		return errors.New("independent updater is still running; inspect its report before another automatic operation")
+	}
+	if err := a.rememberUpdateFailure(ctx, report); err != nil {
+		return err
+	}
+	var failed panelUpdateFailure
+	if err := a.setting(ctx, "updates-failure", &failed); err != nil {
+		return err
+	}
+	if failed.Version == version {
+		return errors.New("this release previously failed automatic maintenance; administrator review and a successful manual stage are required")
+	}
+	run := func(action string) error {
+		err := handoff(action, version)
+		if err != nil && ctx.Err() == nil {
+			err = errors.Join(err, a.setFailedUpdateVersion(ctx, version))
+		}
+		return err
+	}
+	t := report.Journal.Transaction
+	if report.State != "succeeded" || t == nil || t.State != updates.Staged || t.Version != version || t.Channel != channel || t.PreviousVersion != strings.TrimPrefix(a.Version, "v") {
+		if err := run("stage"); err != nil {
+			return err
+		}
+	}
+	allowed, err = a.automaticUpdateAllowed(ctx, channel, now())
+	if err != nil || !allowed {
+		return err
+	}
+	return run("apply")
 }
 func (a *App) registerUpdateJobs() {
 	a.Jobs.Register("panel_check", 0, func(ctx context.Context, t *jobs.Task, _ json.RawMessage) (any, error) {
@@ -237,16 +340,9 @@ func (a *App) registerUpdateJobs() {
 		}
 		if result.Available != nil {
 			a.notify(ctx, "update_available", "", t.Job.ID)
-			inWindow, err := scheduler.InWindow(time.Now(), p.Timezone, p.WindowStart, p.WindowEnd)
-			if err != nil {
-				return result, err
-			}
-			if p.Mode == "automatic" && inWindow && time.Now().Unix() >= p.PostponeUntil {
-				if err := a.handoffUpdate(ctx, t, "stage", result.Available.Version, p.Channel); err != nil {
-					return result, err
-				}
-				return result, a.handoffUpdate(ctx, t, "apply", "", p.Channel)
-			}
+			return result, a.automaticPanelUpdate(ctx, result.Available.Version, p.Channel, time.Now, func(action, version string) error {
+				return a.handoffUpdate(ctx, t, action, version, p.Channel)
+			})
 		}
 		return result, nil
 	})
@@ -279,6 +375,9 @@ func (a *App) registerUpdateJobs() {
 				return nil, err
 			}
 			err := a.handoffUpdate(ctx, t, action, selected, p.Channel)
+			if err == nil && action == "stage" {
+				err = a.setFailedUpdateVersion(ctx, "")
+			}
 			if err != nil {
 				a.notify(ctx, "update_failed", "", t.Job.ID)
 			} else {
