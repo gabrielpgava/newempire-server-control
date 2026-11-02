@@ -29,6 +29,8 @@ type Request struct {
 type Report struct {
 	RequestID string          `json:"request_id"`
 	JobID     string          `json:"job_id"`
+	Action    string          `json:"action"`
+	Version   string          `json:"version"`
 	State     string          `json:"state"`
 	Error     string          `json:"error"`
 	Journal   updates.Journal `json:"journal"`
@@ -80,6 +82,12 @@ func ReadReport(ctx context.Context, root *os.Root) (Report, error) {
 	if !model.ValidID(r.RequestID) || !model.ValidID(r.JobID) || r.State != "running" && r.State != "succeeded" && r.State != "failed" {
 		return r, errors.New("invalid independent updater report")
 	}
+	if r.Action != "" && r.Action != "stage" && r.Action != "apply" && r.Action != "rollback" && r.Action != "recover" {
+		return r, errors.New("invalid independent updater report action")
+	}
+	if len(r.Version) > 120 || strings.ContainsAny(r.Version, "\x00\r\n/") {
+		return r, errors.New("invalid independent updater report version")
+	}
 	return r, nil
 }
 func readJSON(ctx context.Context, root *os.Root, name string, out any, rootOwned bool) error {
@@ -128,7 +136,7 @@ func writeJSON(ctx context.Context, root *os.Root, name string, value any, mode 
 	}
 	defer root.Remove(tmp)
 	_, err = f.Write(b)
-	err = errors.Join(err, f.Sync(), f.Close())
+	err = errors.Join(err, f.Chmod(mode), f.Sync(), f.Close())
 	if err != nil {
 		return err
 	}

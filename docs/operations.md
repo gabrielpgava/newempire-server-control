@@ -97,12 +97,24 @@ oneshot; its success means accepted, not that update/health checks passed.
 Read the durable updater result and the oneshot journal. Reconfiguration and
 world recovery are separate actions; a panel update must never restart Minecraft.
 
-The integration owner must wire `update-helper` to signature re-verification,
-consistent SQLite/config snapshot/restore and authenticated readiness before
-enabling application updates. Update state created by the root oneshot must be
-made readable/writable to the intended panel staging adapter through a reviewed
-ownership policy; do not make the whole install directory panel-writable.
-Root-owned version binaries and `current` must remain administrator-controlled.
+Updater journals, locks, staging and snapshots remain root-private under
+`/opt/new-empire-control/updates` (root:root 0700). The panel submits requests and
+reads root-owned 0644 operation reports inside its own 0700 data directory; it
+does not read or write the private journal. Version binaries and `current` remain
+administrator-controlled. Legacy panel-owned updater state is refused, not
+silently chowned into trust: preserve/review it offline and provision clean state.
+
+Automatic maintenance reuses a matching verified stage and rechecks the current
+policy, channel, window and postponement immediately before applying it. Failed
+versions do not retry automatically until reviewed and successfully staged
+manually; a newer version remains eligible. After restart, only interrupted jobs
+are reconciled from final-operation reports. A successful stage alone does not
+complete an automatic apply workflow.
+
+The updater requires an existing safe, panel-owned `panel.lock`; it never creates
+a root-owned replacement. If absent, a normal panel start can create it. If a
+legacy root-owned or unsafe lock exists, stop the panel and inspect/repair that
+one file offline. Do not remove a held lock or grant group/world write access.
 
 ## Validation before adoption into service
 

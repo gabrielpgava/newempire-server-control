@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import os
 import socket
 import struct
 import tarfile
@@ -57,6 +58,35 @@ def manifest(data):
 
 
 class ReleaseVerificationTests(unittest.TestCase):
+    def test_installer_keeps_updater_state_root_owned(self):
+        calls = []
+
+        @installer.contextlib.contextmanager
+        def directory(path, create=False, owner=(0, 0), mode=0o755):
+            calls.append((path, owner, mode))
+            yield 0
+
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = pathlib.Path(temporary)
+            (stage / "new-empire-control").write_bytes(binary())
+            (stage / "pinned.pem").write_text("dummy public fixture")
+            with mock.patch.object(installer, "directory", directory), mock.patch.object(installer, "ensure_panel", return_value=(1000, 1000)), mock.patch.object(installer, "write_once"), mock.patch.object(installer, "current"), mock.patch.object(installer, "command"), mock.patch.object(installer.os, "readlink", side_effect=FileNotFoundError):
+                installer.install(installer.argparse.Namespace(version="1.2.0"), stage, ["/usr/bin/java"])
+        self.assertIn((installer.INSTALL + "/updates", (0, 0), 0o700), calls)
+        self.assertIn((installer.DATA, (1000, 1000), 0o700), calls)
+
+    @unittest.skipUnless(os.geteuid() == 0, "isolated root ownership fixture required")
+    def test_installer_rejects_legacy_panel_owned_updater_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "updates"
+            path.mkdir(mode=0o700)
+            with installer.directory(str(path)):
+                pass
+            os.chown(path, 1000, 1000)
+            with self.assertRaisesRegex(ValueError, "unsafe ownership"):
+                with installer.directory(str(path)):
+                    self.fail("panel-owned updater state was accepted")
+
     def test_pinned_key_files_and_fingerprint(self):
         raw = base64.b64decode((HERE / "release-public-key.txt").read_text().strip(), validate=True)
         pem = (HERE / "release-public-key.pem").read_text().splitlines()

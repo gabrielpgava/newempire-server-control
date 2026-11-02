@@ -79,11 +79,12 @@ are deleted, imported or restored by the installer.
 | `/opt/new-empire-control/versions/<version>/new-empire-control` | root-owned immutable release binary |
 | `/opt/new-empire-control/current` | root-controlled relative version symlink |
 | `/opt/new-empire-control/control` | root-owned fixed wrapper for the selected binary |
-| `/opt/new-empire-control/updates` | private panel staging; root updater independently verifies inputs |
+| `/opt/new-empire-control/updates` | root:root 0700, private updater journal, staging, lock and recovery snapshots |
 | `/etc/new-empire-control/config.json` | root:panel 0640, panel application settings |
 | `/etc/new-empire-control/runtime.json` | root 0600, privileged path/Java/resource policy |
 | `/etc/new-empire-control/instances/<id>.json` | root 0600, validated registration, no RCON secret |
 | `/var/lib/new-empire-control` | panel-owned 0700, DB, credentials, uploads, external backups/recovery |
+| `/var/lib/new-empire-control/panel-update-report.json` | root-owned 0644 bounded operation result, readable by the panel without private journal access |
 | `/srv/new-empire/instances` | root-owned parent, fixed per-ID managed directories |
 | `/usr/local/libexec/new-empire-runtime` | root-owned restricted helper wrapper |
 
@@ -91,6 +92,13 @@ Initial HTTP binding is `127.0.0.1:8080`. Read the bootstrap token only from the
 protected panel state directory. Use an SSH tunnel for initial setup or configure
 an HTTPS reverse proxy and matching `public_url`/secure cookies before remote
 access. Do not expose the loopback development origin or RCON publicly.
+
+Existing panel-owned `updates/` directories are refused. Do not recursively chown
+them into trust: preserve and inspect legacy state offline, then provision a
+fresh root-owned private directory. The panel never needs direct staging/journal
+write permission. Reports are explicitly chmodded independently of the updater
+umask; snapshot credentials remain root-private. See [self-updates](../self-updates.md)
+for staged-release reuse, failed-version retry latches and job reconciliation.
 
 ## Managed create/import and permissions
 

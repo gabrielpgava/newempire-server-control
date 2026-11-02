@@ -219,7 +219,7 @@ def install(args, stage, java_paths):
         if target is not None and target != "versions/" + args.version:
             raise ValueError("another version is installed; use the verified updater")
     uid, gid = ensure_panel()
-    for path, owner in ((DATA, (uid, gid)), (INSTALL + "/updates", (uid, gid))):
+    for path, owner in ((DATA, (uid, gid)), (INSTALL + "/updates", (0, 0))):
         with directory(path, create=True, owner=owner, mode=0o700):
             pass
     with directory(INSTALL + "/versions/" + args.version, create=True):
