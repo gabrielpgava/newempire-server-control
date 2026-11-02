@@ -14,6 +14,7 @@ import uuid
 
 
 LIMIT = 64 << 20
+TIMEOUT_SECONDS = 600
 
 
 def validate_archive(raw):
@@ -60,11 +61,11 @@ def main():
                'mkdir -p /scratch/web /scratch/home && cp -R /source/. /scratch/web/ && '
                'cp -R /dependencies /scratch/web/node_modules && cd /scratch/web && '
                'env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch/home TMPDIR=/scratch '
-               'npm_config_cache=/scratch/npm npm test >&2 && '
+               'npm_config_cache=/scratch/npm npm test -- --maxWorkers=2 >&2 && '
                'env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch/home TMPDIR=/scratch '
                'npm_config_cache=/scratch/npm npm run build >&2 && tar -cf - dist']
     process = subprocess.Popen(command, stdout=subprocess.PIPE)
-    timer = threading.Timer(180, lambda: subprocess.run(['docker', 'kill', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    timer = threading.Timer(TIMEOUT_SECONDS, lambda: subprocess.run(['docker', 'kill', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     timer.start()
     raw = bytearray()
     try:
@@ -76,8 +77,9 @@ def main():
             if len(raw) > LIMIT:
                 subprocess.run(['docker', 'kill', name], check=False)
                 raise ValueError('Frontend build produced too much output')
-        if process.wait() != 0:
-            raise RuntimeError('Sandboxed frontend validation failed')
+        status = process.wait()
+        if status != 0:
+            raise RuntimeError(f'Sandboxed frontend validation failed (exit {status}; watchdog limit {TIMEOUT_SECONDS} seconds)')
     finally:
         timer.cancel()
         process.stdout.close()

@@ -45,6 +45,12 @@ dependencies outside the sandbox first. Missing cached dependencies are a blocke
 not permission to enable network access inside untrusted tests. The sandbox target
 is separate from normal CI and may not include frontend/browser tests.
 
+`scripts/test-web-sandbox.py --dependencies PRIVATE_LINUX_DEPENDENCY_DIRECTORY`
+separately runs frontend tests/build without network or credentials. Its two
+workers share a two-CPU quota, with a ten-minute watchdog for a cold constrained
+run. Only validated bounded distribution files are copied back; a timeout is a
+failed check, not evidence that the tests passed.
+
 Use a new temporary data directory, localhost-only test servers and disposable
 instances for all manual checks. Never use a real world, production panel
 database, signing secret or broadly privileged systemd account as a test fixture.
