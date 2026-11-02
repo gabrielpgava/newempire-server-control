@@ -21,7 +21,7 @@ export interface Job {
 export interface JobDetail { job: Job; steps: { time: number; progress: number; message: string }[] }
 export interface LogLine { time: string; message: string }
 export interface FileEntry { name: string; path: string; is_dir: boolean; size: number; modified_at?: string; mode?: string }
-export interface Backup { id: string; instance_id: string; created_at: number; size: number; sha256: string; note: string; verified: boolean }
+export interface Backup { id: string; instance_id: string; created_at: number; size: number; sha256: string; note: string; verified: boolean; local?: boolean; offsite?: { state: string; object?: { verification?: string } } }
 export interface World { name: string; path: string; active: boolean; dimensions: string[] }
 export interface Worlds { active: string; worlds: World[] }
 export interface Players { online: string[]; whitelist: unknown[]; operators: unknown[]; bans: unknown[]; ip_bans?: unknown[] }
@@ -40,7 +40,7 @@ export interface RestorePreview { files: { path: string; size: number }[]; total
 export interface Schedule { id: string; instance_id: string; kind: string; hour: number; minute: number; weekdays: number[]; timezone: string; enabled: boolean; next_run?: number; last_job_id?: string }
 export interface AuditEntry { id: string; time: number; user_id: string; action: string; instance_id?: string; detail?: string }
 export interface PanelSettings { public_url: string; version: string; runtime_provider: string; adopt_roots: string[]; java_paths: string[]; notifications: { configured: boolean; enabled: boolean }; storage: { configured: boolean; enabled: boolean }; backup_retention: { enabled: boolean; keep_last: number }; [key: string]: unknown }
-export interface UpdatePolicy { mode: string; channel: string; interval_hours: number; window_start: string; window_end: string; timezone: string }
+export interface UpdatePolicy { mode: string; channel: string; interval_hours: number; window_start: string; window_end: string; timezone: string; postpone_until?: number }
 export interface UpdateState {
   current_version: string; repository: string; available: null | { version: string; notes: string; size: number; prerelease: boolean }
   state: string; detail?: string; history: unknown[]; policy: UpdatePolicy
