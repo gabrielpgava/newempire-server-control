@@ -1,0 +1,2957 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: New Empire Server Control API
+  version: unreleased
+  summary: Authenticated management of isolated Minecraft Java/Fabric instances.
+  description: |
+    Source-available under PolyForm Shield 1.0.0. This reference describes the
+    integration contract; an unreleased schema is not a published-version claim.
+
+    JSON uses snake_case. Lists are arrays, including empty lists. Timestamps are
+    Unix seconds unless a field explicitly uses date-time. JSON requests reject
+    unknown fields and must contain exactly one object with Content-Type
+    application/json. Ordinary JSON errors are {error: string}. tus protocol and
+    standard HTTP range errors may be plain text, as documented on those routes.
+
+    The nec_session cookie is HTTP-only, SameSite=Strict, expires after 12 hours,
+    and is Secure on HTTPS. Authenticated mutations require both Origin matching
+    the configured public_url and X-CSRF-Token from GET /api/v1/auth/session.
+    Setup/login require matching Origin without a pre-existing session. This API
+    is same-origin; no bearer-token or cross-origin administration is implied.
+    The separately documented /internal/health route is a loopback-only machine
+    probe for the independent updater, not a user administration token API.
+
+    Roles are cumulative: owner > admin > operator > viewer. Owners/admins can
+    access all instances; operators/viewers need explicit instance grants.
+    Unauthorized instance/job lookups return 404 to avoid disclosing existence.
+    Per-operation x-minimum-role values supplement, not replace, instance grants.
+
+    HTTP 202 means a durable job was accepted, never that the requested operation
+    completed. Poll GET /api/v1/jobs/{jobID} and inspect job.state, job.error,
+    job.result, and steps. Mutations serialize per instance; panel-wide jobs
+    exclude concurrent instance work. Cancellation is safe-point based and can
+    be refused after a commit barrier. Content failure never authorizes an
+    implicit world rollback. No Paper/Purpur plugin or Docker runtime provider
+    is exposed by this contract.
+  license:
+    name: PolyForm Shield 1.0.0 (source-available)
+    url: https://polyformproject.org/licenses/shield/1.0.0
+servers:
+  - url: /
+    description: Same origin as the embedded panel.
+security:
+  - sessionCookie: []
+tags:
+  - {name: Health, description: Minimal liveness and authenticated diagnostics.}
+  - {name: Authentication, description: Protected setup and cookie sessions.}
+  - {name: Instances, description: 'Creation, adoption, status, and lifecycle.'}
+  - {name: Files, description: 'Confined files, staging, imports, and recovery.'}
+  - {name: Uploads, description: Owner-checked tus 1.0 resumable staging.}
+  - {name: Backups, description: Verified archives and explicit restores.}
+  - {name: Worlds, description: World selection and safe server properties.}
+  - {name: Players, description: Minecraft moderation and access records.}
+  - {name: Content, description: Fabric mods and explicit content plans.}
+  - {name: Runtime, description: Upstream Fabric metadata and allowlisted Java.}
+  - {name: Jobs, description: Durable execution and safe cancellation.}
+  - {name: Automation, description: Timezone-aware schedules and invalidations.}
+  - {name: Administration, description: 'Users, redacted settings, and audit.'}
+  - {name: Updates, description: Official signed panel-release workflows.}
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      tags: [Health]
+      summary: Read minimal public liveness
+      description: Does not disclose version, instance state, or database details.
+      security: []
+      responses:
+        '200':
+          description: HTTP process is responding.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Liveness'}
+  /internal/health:
+    get:
+      operationId: getUpdaterHealth
+      tags: [Health]
+      summary: Probe panel identity/database from the independent local updater
+      description: |
+        Internal machine endpoint, not a browser login or public readiness API.
+        Requires the protected local data_dir/health-token as Authorization
+        Bearer and a physical loopback peer address. A proxy is not permission
+        to expose this probe remotely. The token is never returned by HTTP.
+      x-internal: true
+      security:
+        - updaterHealthToken: []
+      responses:
+        '200':
+          description: Running panel version without a leading v, and database schema.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/setup:
+    get:
+      operationId: getSetupStatus
+      tags: [Authentication]
+      summary: Check whether first-owner setup is required
+      description: Never returns the protected local bootstrap token.
+      security: []
+      responses:
+        '200':
+          description: Setup requirement.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SetupStatus'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: createFirstOwner
+      tags: [Authentication]
+      summary: Complete token-protected first-owner setup
+      description: |
+        The token is read locally from data_dir/setup-token, never from HTTP.
+        Creates the first owner, consumes the token, and signs in. No default
+        account or unauthenticated administrator mode exists. Passwords are
+        12–1024 bytes; setup is closed after the first user is created.
+      security: []
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetupRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/SessionCreated'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [Authentication]
+      summary: Sign in with password and optional TOTP code
+      security: []
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/SessionCreated'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/auth/session:
+    get:
+      operationId: getSession
+      tags: [Authentication]
+      summary: Read the current user and CSRF token
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: The raw session cookie token is not serialized.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [Authentication]
+      summary: Invalidate the current session and expire its cookie
+      x-minimum-role: viewer
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/totp:
+    post:
+      operationId: enrollTOTP
+      tags: [Authentication]
+      summary: Generate a TOTP secret or confirm enrollment for the current user
+      description: |
+        Send {} to generate a secret. Send password, that secret, and a valid
+        code to enable TOTP. Successful enrollment revokes existing sessions;
+        sign in again. There is no disable/reset endpoint in this contract.
+      x-minimum-role: viewer
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPRequest'}
+      responses:
+        '200':
+          description: Newly generated secret or enrollment confirmation.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/TOTPSecret'}
+                  - {$ref: '#/components/schemas/OK'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      tags: [Health]
+      summary: Check database availability and read panel build/schema identity
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Database reachable; not a Minecraft readiness check.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/events:
+    get:
+      operationId: getEvents
+      tags: [Automation]
+      summary: Subscribe to periodic server-sent invalidations
+      description: |
+        Emits event: change with Unix-second data approximately every three
+        seconds. Refetch authorized state; no event replay, durable delivery,
+        Last-Event-ID support, or operation-completion guarantee is implied.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Long-lived same-origin SSE stream.
+          headers:
+            X-Accel-Buffering: {schema: {type: string, const: 'no'}}
+          content:
+            text/event-stream:
+              schema: {type: string}
+              example: "event: change\ndata: 1793577600\n\n"
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/instances:
+    get:
+      operationId: listInstances
+      tags: [Instances]
+      summary: List instances visible to the current user
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Filtered inventory; credentials are never serialized.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Instance'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      operationId: createInstance
+      tags: [Instances]
+      summary: Queue creation, staged import, or allowlisted adoption
+      description: |
+        Every mode needs explicit EULA acceptance, versions, an allowlisted Java
+        path, memory, and distinct unprivileged game/RCON ports. Import/adopt
+        require a matching preview_hash and explicit safe detected launcher.
+        Adopt never silently rewrites external files or unsafe RCON settings.
+        The accepted job reserves instance_id; successful result.instance is the
+        created record. Service provisioning/firewall requirements remain real
+        host prerequisites, not simulated successes.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateInstanceRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/adoptions:
+    get:
+      operationId: listAdoptionRoots
+      tags: [Instances]
+      summary: List administrator-allowlisted host roots
+      description: Roots are host configuration, not unrestricted filesystem access.
+      x-minimum-role: admin
+      responses:
+        '200':
+          description: Allowlisted roots.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdoptionRoots'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/adoptions/preview:
+    post:
+      operationId: previewAdoption
+      tags: [Instances]
+      summary: Inspect an existing allowlisted directory without adopting it
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdoptionPreviewRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/ImportPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/imports/preview:
+    post:
+      operationId: previewInitialImport
+      tags: [Files]
+      summary: Inspect a completed upload before creating an instance
+      description: Upload must belong to the current user and be complete/unexpired.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody: {$ref: '#/components/requestBodies/UploadPreview'}
+      responses:
+        '200': {$ref: '#/components/responses/ImportPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/instances/{instanceID}:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getInstance
+      tags: [Instances]
+      summary: Read a permitted instance without credentials
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Instance metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Instance'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/instances/{instanceID}/status:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getInstanceStatus
+      tags: [Instances]
+      summary: Read runtime state and Minecraft readiness
+      description: |
+        A process alone is not ready. Runtime errors produce state unknown,
+        ready false, and detail in the 200 response rather than invented metrics.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Current observation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/instances/{instanceID}/logs:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getInstanceLogs
+      tags: [Instances]
+      summary: Read up to 200 recent runtime log lines
+      description: No arbitrary journal query or log-limit parameter is supported.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Bounded log lines; known RCON secret is redacted.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/LogLine'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/instances/{instanceID}/metrics:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getInstanceMetrics
+      tags: [Instances]
+      summary: Read up to 288 newest recorded runtime samples
+      description: Samples are approximately minute-spaced; unavailable measurements are not invented.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Newest-first samples; no arbitrary time-range query is supported.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Metric'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/actions/{action}:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+      - name: action
+        in: path
+        required: true
+        schema: {type: string, enum: [start, stop, restart, backup]}
+    post:
+      operationId: queueLifecycleAction
+      tags: [Instances]
+      summary: Queue a validated lifecycle action or default offline backup
+      description: |
+        Start/restart wait for Minecraft readiness in the job. Use POST /backups
+        for a note or coordinated-online selection. No shell commands or arbitrary
+        service names are accepted. Request body is not used.
+      x-minimum-role: operator
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/console:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: queueConsoleCommand
+      tags: [Instances]
+      summary: Queue one Minecraft command; read result.output after success
+      description: |
+        Not a host shell. Operators are restricted to list, say, kick, whitelist
+        add/remove/list, ban, pardon, and save-all. Other commands need admin.
+        stop/save-off/save-on are forbidden; use lifecycle/coordinated backups.
+        RCON protocol limits may reject input below the outer 4096-byte limit.
+      x-minimum-role: operator
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConsoleRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/files:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: listFiles
+      tags: [Files]
+      summary: List or search a confined relative directory
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/DirectoryPath'}
+        - name: q
+          in: query
+          description: Optional case-insensitive recursive filename search, limited to 200 results.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Direct children when q is omitted; matching recursive entries when supplied.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/FileEntry'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      operationId: mutateFiles
+      tags: [Files]
+      summary: Queue a file edit, directory creation, move, trash, or recovery
+      description: |
+        Minecraft must already be stopped; this job rejects a running instance
+        rather than silently stopping it. All paths are confined instance-relative
+        paths. Existing text edits need
+        the preview etag; stale data is rejected. Trash retains data in external
+        recovery. Recover uses the retained token/original path and must not
+        overwrite a destination. No direct permanent-delete or arbitrary-shell
+        operation is exposed. Required backup/shutdown checks run in the job.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FileMutationRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/file:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getFile
+      tags: [Files]
+      summary: Download a confined regular file or preview bounded UTF-8 text
+      description: |
+        preview=true returns JSON with an etag for a later write. Sensitive
+        files and unsafe links/special files are rejected. Without preview the
+        response is bytes, not JSON. A general download is not a consistent backup.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/FilePath'}
+        - name: preview
+          in: query
+          schema: {type: boolean, default: false}
+        - {$ref: '#/components/parameters/Range'}
+      responses:
+        '200':
+          description: Text preview JSON or downloaded file bytes.
+          headers:
+            Content-Disposition: {$ref: '#/components/headers/ContentDisposition'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TextPreview'}
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '206': {$ref: '#/components/responses/PartialDownload'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '416': {$ref: '#/components/responses/RangeNotSatisfiable'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/export:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: exportFiles
+      tags: [Files]
+      summary: Stream a confined directory or path as ZIP
+      description: |
+        Not a coordinated online backup. Use the backup workflow for consistent
+        world copies. A streaming failure may terminate the response rather
+        than append a JSON error to an already-started ZIP.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/DirectoryPath'}
+      responses:
+        '200':
+          description: ZIP stream.
+          headers:
+            Content-Disposition: {$ref: '#/components/headers/ContentDisposition'}
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/instances/{instanceID}/recovery:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: listRecovery
+      tags: [Files]
+      summary: List retained deleted paths for this instance
+      description: Restore through POST /files with operation recover, token, and confirm true.
+      x-minimum-role: admin
+      responses:
+        '200':
+          description: External recovery entries; not a general backup catalog.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/RecoveryEntry'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/imports/preview:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: previewInstanceImport
+      tags: [Files]
+      summary: Inspect a completed upload against an existing instance
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody: {$ref: '#/components/requestBodies/UploadPreview'}
+      responses:
+        '200':
+          description: Archive inspection and existing-path conflicts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InstanceImportPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/instances/{instanceID}/imports/apply:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: applyInstanceImport
+      tags: [Files]
+      summary: Queue the exact reviewed staged import
+      description: |
+        Minecraft must already be stopped for preview and apply. Rechecks upload
+        ownership/completeness and preview_hash, takes the required restore
+        point and stopped-runtime checks, and applies under the instance lock.
+        A changed/stale preview fails; uploading is never itself an import.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ImportApplyRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/uploads/:
+    options:
+      operationId: getUploadCapabilities
+      tags: [Uploads]
+      summary: Discover authenticated tus staging capabilities
+      x-minimum-role: admin
+      responses:
+        '204': {$ref: '#/components/responses/TusCapabilities'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/UploadForbidden'}
+    post:
+      operationId: createUpload
+      tags: [Uploads]
+      summary: Reserve a fixed-length resumable upload in private staging
+      description: |
+        tus 1.0 creation: filename metadata is required and base64 encoded.
+        No deferred length, concatenation, or upload download is supported.
+        Uploaded bytes do not enter an instance until a separate reviewed job.
+        Upload IDs are owned by the creating user, quota-reserved, and expiring.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/TusResumable'}
+        - name: Upload-Length
+          in: header
+          required: true
+          description: Total byte length; fixed at creation and constrained by host quota.
+          schema: {type: integer, format: int64, minimum: 0}
+        - name: Upload-Metadata
+          in: header
+          required: true
+          description: Comma-separated tus metadata; must include a safe filename.
+          schema: {type: string, maxLength: 4096}
+          example: filename c2VydmVyLnppcA==
+      responses:
+        '201':
+          description: Staging reservation created; empty body.
+          headers:
+            Location:
+              description: URL of the owned upload resource.
+              schema: {type: string, format: uri-reference}
+            Tus-Resumable: {$ref: '#/components/headers/TusResumable'}
+            Upload-Expires: {$ref: '#/components/headers/UploadExpires'}
+        '400': {$ref: '#/components/responses/UploadError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/UploadForbidden'}
+        '412': {$ref: '#/components/responses/TusVersionError'}
+        '413': {$ref: '#/components/responses/UploadTooLarge'}
+        '503': {$ref: '#/components/responses/UploadUnavailable'}
+  /api/v1/uploads/{uploadID}:
+    parameters:
+      - {$ref: '#/components/parameters/UploadID'}
+    options:
+      operationId: getUploadResourceCapabilities
+      tags: [Uploads]
+      summary: Discover tus capabilities for an owned upload
+      x-minimum-role: admin
+      responses:
+        '204': {$ref: '#/components/responses/TusCapabilities'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/UploadForbidden'}
+        '404': {$ref: '#/components/responses/UploadNotFound'}
+    head:
+      operationId: getUploadOffset
+      tags: [Uploads]
+      summary: Read a complete or partial upload's authoritative byte offset
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/TusResumable'}
+      responses:
+        '200':
+          description: No body; resume from Upload-Offset, not a guessed client offset.
+          headers:
+            Tus-Resumable: {$ref: '#/components/headers/TusResumable'}
+            Upload-Offset: {$ref: '#/components/headers/UploadOffset'}
+            Upload-Length:
+              schema: {type: integer, format: int64, minimum: 0}
+            Upload-Metadata:
+              description: Original safe filename in tus metadata encoding.
+              schema: {type: string}
+            Upload-Expires: {$ref: '#/components/headers/UploadExpires'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/UploadForbidden'}
+        '404': {$ref: '#/components/responses/UploadNotFound'}
+        '412': {$ref: '#/components/responses/TusVersionError'}
+    patch:
+      operationId: appendUpload
+      tags: [Uploads]
+      summary: Append bytes at the server-confirmed upload offset
+      description: Resume using HEAD after an interrupted request. Completion is offset equal to length, not import success.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/TusResumable'}
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: {type: integer, format: int64, minimum: 0}
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '204':
+          description: Bytes durably accepted; no body.
+          headers:
+            Tus-Resumable: {$ref: '#/components/headers/TusResumable'}
+            Upload-Offset: {$ref: '#/components/headers/UploadOffset'}
+            Upload-Expires: {$ref: '#/components/headers/UploadExpires'}
+        '400': {$ref: '#/components/responses/UploadError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/UploadForbidden'}
+        '404': {$ref: '#/components/responses/UploadNotFound'}
+        '409': {$ref: '#/components/responses/UploadOffsetConflict'}
+        '412': {$ref: '#/components/responses/TusVersionError'}
+        '413': {$ref: '#/components/responses/UploadTooLarge'}
+        '423': {$ref: '#/components/responses/UploadLocked'}
+        '500': {$ref: '#/components/responses/UploadError'}
+    delete:
+      operationId: terminateUpload
+      tags: [Uploads]
+      summary: Delete an owned staged upload without touching an instance
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/TusResumable'}
+      responses:
+        '204':
+          description: Staged upload removed; no body.
+          headers:
+            Tus-Resumable: {$ref: '#/components/headers/TusResumable'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/UploadForbidden'}
+        '404': {$ref: '#/components/responses/UploadNotFound'}
+        '412': {$ref: '#/components/responses/TusVersionError'}
+        '423': {$ref: '#/components/responses/UploadLocked'}
+        '500': {$ref: '#/components/responses/UploadError'}
+  /api/v1/instances/{instanceID}/backups:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: listBackups
+      tags: [Backups]
+      summary: List the permitted instance's backup catalog
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Catalog entries, not proof of an independently tested restore.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Backup'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      operationId: createBackup
+      tags: [Backups]
+      summary: Queue an offline or explicitly coordinated-online backup
+      description: Offline is the default. online true requires the implemented runtime coordination; never copies a running tree as if it were automatically consistent.
+      x-minimum-role: operator
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BackupRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/backups/{backupID}/download:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+      - {$ref: '#/components/parameters/BackupID'}
+    get:
+      operationId: downloadBackup
+      tags: [Backups]
+      summary: Download an authenticated backup with HTTP byte-range support
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Range'}
+      responses:
+        '200':
+          description: Whole backup archive.
+          headers:
+            Accept-Ranges: {schema: {type: string, const: bytes}}
+            Content-Disposition: {$ref: '#/components/headers/ContentDisposition'}
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '206': {$ref: '#/components/responses/PartialDownload'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '416': {$ref: '#/components/responses/RangeNotSatisfiable'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/backups/{backupID}/preview:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+      - {$ref: '#/components/parameters/BackupID'}
+    get:
+      operationId: previewRestore
+      tags: [Backups]
+      summary: Inspect backup contents before deciding to restore
+      x-minimum-role: admin
+      responses:
+        '200':
+          description: Affected archive paths and warnings; no data restored.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RestorePreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/backups/{backupID}/verify:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+      - {$ref: '#/components/parameters/BackupID'}
+    post:
+      operationId: verifyBackup
+      tags: [Backups]
+      summary: Queue archive and integrity-manifest verification
+      x-minimum-role: operator
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/backups/{backupID}/restore:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+      - {$ref: '#/components/parameters/BackupID'}
+    post:
+      operationId: restoreBackup
+      tags: [Backups]
+      summary: Queue an explicitly confirmed restore after preview
+      description: |
+        Admin decision separate from content/runtime rollback. The job must
+        verify the archive, create the required pre-restore recovery point,
+        gracefully stop the runtime, and apply only under the instance lock.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/Confirmation'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/properties:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getProperties
+      tags: [Worlds]
+      summary: Read safe server properties without RCON secrets
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: String-valued properties and restart requirement.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Properties'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      operationId: saveProperties
+      tags: [Worlds]
+      summary: Queue confirmed edits to supported safe property keys
+      description: Preserves unknown keys/comments. Managed RCON credentials and unsafe keys are not arbitrary editable settings.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PropertiesRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/worlds:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: listWorlds
+      tags: [Worlds]
+      summary: Read world directories and the selected active world
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Detected world metadata, not fabricated generation status.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Worlds'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      operationId: mutateWorlds
+      tags: [Worlds]
+      summary: Queue a world directory creation or active-world change
+      description: create prepares an empty directory; Minecraft generates the save on a later start. No implicit generation, deletion, or conversion operation exists.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorldMutationRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/players:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getPlayers
+      tags: [Players]
+      summary: Read online names and Minecraft-authored access-list records
+      description: ip_bans is administrator-only. Records are not enriched profiles or a historical player census.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Current observation and stored lists.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Players'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: queuePlayerAction
+      tags: [Players]
+      summary: Queue a validated player moderation action
+      description: |
+        Operator on granted instances for ordinary moderation. op/deop/op_level
+        and ban_ip/pardon_ip require admin. For IP actions player is an address;
+        otherwise it is a Minecraft name. say uses value without player. Ordinary
+        actions require readiness; op_level requires a stopped runtime and an
+        existing OP record, then takes a verified backup before saving level 1–4.
+      x-minimum-role: operator
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PlayerActionRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/mods/search:
+    get:
+      operationId: searchMods
+      tags: [Content]
+      summary: Search Modrinth for candidate Fabric server mods
+      description: Search is discovery; only a later compatibility/dependency plan authorizes installation.
+      x-minimum-role: admin
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Candidate projects.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/ModSearchResult'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/instances/{instanceID}/mods:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: listMods
+      tags: [Content]
+      summary: Read hash-based Fabric mod inventory
+      description: Unknown/external files are preserved; filename alone is not identity. No Paper/Purpur plugins are listed as managed Fabric mods.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Inventory and managed/pinned/update indicators.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Mod'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/instances/{instanceID}/mods/plan:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: planMods
+      tags: [Content]
+      summary: Resolve compatible managed updates or explicit project installs
+      description: Empty/omitted projects plans updates to managed inventory. Stable server-compatible choices are the default; inspect blocked and warnings before approval.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModPlanRequest'}
+      responses:
+        '200':
+          description: Hash-bound dependency/content plan; does not apply changes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModPlan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/instances/{instanceID}/mods/apply:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: applyMods
+      tags: [Content]
+      summary: Queue the reviewed content plan with explicit confirmation
+      description: Replans and rejects changed content/metadata. Pins/external files remain protected; failure never implicitly restores world data.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModApplyRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/mods/manage:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: manageMod
+      tags: [Content]
+      summary: Queue a managed project's pin, unpin, disable, or remove operation
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModManageRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/mods/policy:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: getModPolicy
+      tags: [Content]
+      summary: Read the instance's content-check/application policy
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Manual by default; not inferred from a schedule.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModPolicy'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      operationId: saveModPolicy
+      tags: [Content]
+      summary: Save explicit content automation preferences
+      description: automatic-safe is opt-in, maintenance-window constrained, and still subject to compatibility/backup/player checks.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModPolicy'}
+      responses:
+        '200':
+          description: Saved policy.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModPolicy'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/fabric/versions:
+    get:
+      operationId: getFabricVersions
+      tags: [Runtime]
+      summary: Discover stable Fabric game, loader, and installer choices
+      description: Choices come from official metadata, not hard-coded current versions. Select a game to obtain its compatible loaders.
+      x-minimum-role: admin
+      parameters:
+        - name: minecraft_version
+          in: query
+          schema: {type: string}
+      responses:
+        '200':
+          description: Available stable versions.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FabricVersions'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '502': {$ref: '#/components/responses/BadGateway'}
+  /api/v1/java:
+    get:
+      operationId: listJava
+      tags: [Runtime]
+      summary: Inspect administrator-allowlisted Java executables
+      description: No PATH search or Java installation. Empty allowlist is an actionable error; per-executable failures are reported instead of guessed versions.
+      x-minimum-role: admin
+      responses:
+        '200':
+          description: Actual executable probe results.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/JavaRuntime'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/instances/{instanceID}/runtime/plan:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: planRuntime
+      tags: [Runtime]
+      summary: Review explicit Fabric/Java runtime migration selections
+      description: Metadata determines the Java requirement. No mutable latest alias or unreviewed automatic world conversion is implied.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeSelection'}
+      responses:
+        '200':
+          description: Hash-bound plan; inspect all warnings including origin-only launcher trust.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimePlan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/instances/{instanceID}/runtime/apply:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: applyRuntime
+      tags: [Runtime]
+      summary: Queue the reviewed explicit runtime migration
+      description: Rechecks versions/plan and stages files before required backup/shutdown/commit checks. Does not authorize implicit world rollback.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeApplyRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/jobs:
+    get:
+      operationId: listJobs
+      tags: [Jobs]
+      summary: List up to 200 newest visible jobs
+      description: Payloads are redacted to null on read. Instance jobs require instance access; global panel jobs require admin.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Durable job records.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Job'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/jobs/{jobID}:
+    parameters:
+      - {$ref: '#/components/parameters/JobID'}
+    get:
+      operationId: getJob
+      tags: [Jobs]
+      summary: Read one visible job and its persisted progress steps
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Accepted is not completed; inspect the terminal state and result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JobDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/jobs/{jobID}/cancel:
+    parameters:
+      - {$ref: '#/components/parameters/JobID'}
+    post:
+      operationId: cancelJob
+      tags: [Jobs]
+      summary: Request cancellation before the job's commit barrier
+      description: |
+        Admin only. Queued jobs can become cancelled immediately; running jobs
+        observe cancellation at safe checkpoints. ok true confirms the request,
+        not necessarily a terminal state. Terminal/noncancellable jobs return 409.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/schedules:
+    get:
+      operationId: listSchedules
+      tags: [Automation]
+      summary: List schedules filtered by instance access
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Saved schedules with next run and most recent job ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Schedule'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      operationId: saveSchedule
+      tags: [Automation]
+      summary: Create or update a timezone-aware instance schedule
+      description: Omit id to create; include it to update. Only backup/restart/mod_check are allowed. Next run is calculated by the server; no arbitrary cron or shell.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ScheduleRequest'}
+      responses:
+        '201':
+          description: Saved schedule, not an executed job.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Schedule'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/schedules/{scheduleID}:
+    parameters:
+      - {$ref: '#/components/parameters/ScheduleID'}
+    delete:
+      operationId: deleteSchedule
+      tags: [Automation]
+      summary: Stop future scheduled runs without deleting previous jobs/backups
+      description: Does not cancel an already queued or running job.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/audit:
+    get:
+      operationId: listAudit
+      tags: [Administration]
+      summary: Read up to 500 newest audit entries
+      x-minimum-role: admin
+      responses:
+        '200':
+          description: Newest-first audit history; no arbitrary pagination query is supported.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/AuditEntry'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      tags: [Administration]
+      summary: List nonsecret panel account summaries
+      x-minimum-role: owner
+      responses:
+        '200':
+          description: No password hashes, TOTP secrets, sessions, or recovery credentials.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/User'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      operationId: createUser
+      tags: [Administration]
+      summary: Create an account with a role and optional instance grants
+      description: |
+        Owner only. Instance grants are used for operator/viewer; owner/admin
+        already have global instance access. This contract has no account
+        deletion, password reset, or grant-edit endpoint.
+      x-minimum-role: owner
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateUserRequest'}
+      responses:
+        '201':
+          description: Created account summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      tags: [Administration]
+      summary: Read panel configuration and nonsecret saved preferences
+      description: Saved integration credentials are never returned; configured flags are not live-delivery proof. Host adoption roots and Java paths are returned only to admin/owner.
+      x-minimum-role: viewer
+      responses:
+        '200':
+          description: Redacted settings.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Settings'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      operationId: saveSettings
+      tags: [Administration]
+      summary: Save owner-controlled panel preferences or integration credentials
+      description: |
+        Owner only, including nonsecret changes. Credentials are write-only;
+        do not send a redacted GET as if it were replacement configuration.
+        public_url, Java paths, and adoption roots are read-only here; change
+        them through the protected host configuration and restart the panel.
+      x-minimum-role: owner
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SettingsRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/updates:
+    get:
+      operationId: getUpdates
+      tags: [Updates]
+      summary: Read current panel release state, available candidate, and policy
+      description: A candidate is not trusted/applied merely because it appears here. No released version is assumed for an unreleased build.
+      x-minimum-role: admin
+      responses:
+        '200':
+          description: Panel-only update status; saved credentials are not exposed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdateStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/updates/policy:
+    put:
+      operationId: saveUpdatePolicy
+      tags: [Updates]
+      summary: Save the owner's panel-release check/application policy
+      description: Independent of mod policies; automatic mode never permits unsigned/unverified releases or a Minecraft restart.
+      x-minimum-role: owner
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdatePolicy'}
+      responses:
+        '200':
+          description: Saved policy.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdatePolicy'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/updates/postpone:
+    post:
+      operationId: postponePanelUpdates
+      tags: [Updates]
+      summary: Defer automatic panel application for a bounded number of hours
+      description: Saves postpone_until synchronously. Does not cancel existing jobs or defer manually confirmed work.
+      x-minimum-role: owner
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdatePostponeRequest'}
+      responses:
+        '200':
+          description: Saved policy including postpone_until.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdatePolicy'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/updates/{action}:
+    parameters:
+      - name: action
+        in: path
+        required: true
+        schema: {type: string, enum: [check, stage, apply, rollback]}
+    post:
+      operationId: queuePanelUpdate
+      tags: [Updates]
+      summary: Queue official release check, staging, application, or rollback
+      description: |
+        Owner only. check discovers metadata; stage downloads/authenticates the
+        candidate; apply invokes the restricted independent updater; rollback
+        handles panel recovery. Send confirm true for apply/rollback. A missing
+        signing key/helper is a failure. Panel-only restarts must not restart
+        Minecraft or modify world/content files. Inspect job outcome and updater
+        health/recovery state after reconnecting; 202 is never update success.
+      x-minimum-role: owner
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateActionRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nec_session
+      description: HTTP-only same-origin session from setup/login. Mutations also need Origin and X-CSRF-Token headers.
+    updaterHealthToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Protected local health-token for the independent updater only. Physical loopback source is also mandatory; this grants no user API access.
+  parameters:
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      description: Exact configured public_url origin; browsers supply it automatically for same-origin mutations.
+      schema: {type: string, format: uri}
+      example: http://127.0.0.1:8080
+    CSRF:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: csrf_token from the current authenticated session, not the raw cookie token.
+      schema: {type: string, minLength: 1}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Optional key for an identical enqueue request, namespaced to the user.
+        The engine limits the complete namespaced key to 200 bytes, leaving
+        167 ASCII bytes after a 32-character user ID and colon. Different work
+        with the same key is rejected. Not used by ordinary settings saves.
+      schema: {type: string, maxLength: 167}
+    InstanceID:
+      name: instanceID
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ID'}
+    JobID:
+      name: jobID
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ID'}
+    ScheduleID:
+      name: scheduleID
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ID'}
+    BackupID:
+      name: backupID
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ID'}
+    UploadID:
+      name: uploadID
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ID'}
+    DirectoryPath:
+      name: path
+      in: query
+      description: Safe instance-relative path; dot selects the instance root.
+      schema:
+        $ref: '#/components/schemas/RelativePath'
+        default: .
+    FilePath:
+      name: path
+      in: query
+      required: true
+      description: Safe instance-relative regular-file path; root/dot is not downloadable as a file.
+      schema: {$ref: '#/components/schemas/RelativePath'}
+    Range:
+      name: Range
+      in: header
+      description: Optional HTTP byte range for non-preview file/archive downloads.
+      schema: {type: string}
+      example: bytes=0-1048575
+    TusResumable:
+      name: Tus-Resumable
+      in: header
+      required: true
+      schema: {type: string, const: 1.0.0}
+  headers:
+    ContentDisposition:
+      description: Attachment metadata when downloading; filenames are not filesystem authority.
+      schema: {type: string}
+    TusResumable:
+      schema: {type: string, const: 1.0.0}
+    UploadOffset:
+      description: Current durably stored byte offset.
+      schema: {type: integer, format: int64, minimum: 0}
+    UploadExpires:
+      description: Upload expiry as an HTTP date, not an RFC3339 or Unix timestamp.
+      schema: {type: string}
+  requestBodies:
+    UploadPreview:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/UploadPreviewRequest'}
+    Confirmation:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Confirmation'}
+  responses:
+    OK:
+      description: Synchronous request completed, or cancellation request accepted as documented.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/OK'}
+    SessionCreated:
+      description: Authenticated user and CSRF token; session token is only in Set-Cookie.
+      headers:
+        Set-Cookie:
+          description: nec_session with Path=/, HttpOnly, SameSite=Strict, 12-hour Max-Age, and Secure on HTTPS.
+          schema: {type: string}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Session'}
+    AcceptedJob:
+      description: |
+        Durable job accepted. Poll /api/v1/jobs/{jobID}; do not report completion
+        until state is succeeded. Failures can occur after this response. Console
+        output is result.output; instance creation returns result.instance.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Job'}
+    ImportPreview:
+      description: Bound inspection identity, safe paths, warnings, and detected runtime/world candidates.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ImportPreview'}
+    BadRequest:
+      description: Invalid JSON/content type, unknown field, unsafe input, unsupported action, invalid plan, or enqueue rejection.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unauthorized:
+      description: Authentication required, expired session, or invalid login credentials/TOTP.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: Role does not permit the operation, invalid Origin/CSRF, protected content, or invalid setup token.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: Resource is missing, not visible to the user, or cannot be safely opened/recovered.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: Setup already completed, stale preview/plan/edit, occupied destination, or job cannot be cancelled at this step.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    TooManyRequests:
+      description: Too many sign-in/setup attempts; wait for the 15-minute attempt window.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    InternalError:
+      description: Internal/database/audit failure. A 500 after partial synchronous work may require inspection before retrying.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unavailable:
+      description: Database, upstream metadata, runtime, signing configuration, or restricted helper unavailable.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    BadGateway:
+      description: Authoritative upstream metadata or provider request failed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    PartialDownload:
+      description: Requested byte range.
+      headers:
+        Content-Range:
+          schema: {type: string}
+        Accept-Ranges:
+          schema: {type: string, const: bytes}
+      content:
+        application/octet-stream:
+          schema: {type: string, format: binary}
+        multipart/byteranges:
+          schema: {type: string, format: binary}
+    RangeNotSatisfiable:
+      description: Standard HTTP range rejection; not the ordinary JSON error envelope.
+      headers:
+        Content-Range:
+          schema: {type: string}
+      content:
+        text/plain:
+          schema: {type: string}
+    TusCapabilities:
+      description: Authenticated tus protocol discovery; no body.
+      headers:
+        Tus-Version:
+          schema: {type: string}
+        Tus-Extension:
+          description: Advertised extensions only; downloads, deferred length, and concatenation are disabled.
+          schema: {type: string}
+        Tus-Max-Size:
+          schema: {type: integer, format: int64, minimum: 0}
+    UploadError:
+      description: tus/storage request failure; protocol errors can be plain text.
+      content:
+        text/plain:
+          schema: {type: string}
+    UploadForbidden:
+      description: Role/Origin/CSRF rejection is JSON; upload-service ownership authorization errors can be plain text.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+        text/plain:
+          schema: {type: string}
+    UploadNotFound:
+      description: Missing, expired, or another user's upload; does not disclose ownership.
+      content:
+        text/plain:
+          schema: {type: string}
+    TusVersionError:
+      description: Missing/unsupported Tus-Resumable version.
+      headers:
+        Tus-Version:
+          schema: {type: string}
+      content:
+        text/plain:
+          schema: {type: string}
+    UploadTooLarge:
+      description: Declared length, body, count, or reserved staging quota exceeded.
+      content:
+        text/plain:
+          schema: {type: string}
+    UploadOffsetConflict:
+      description: Upload-Offset differs from stored data; use HEAD before resuming.
+      content:
+        text/plain:
+          schema: {type: string}
+    UploadLocked:
+      description: Upload is locked by another request; do not write competing offsets.
+      content:
+        text/plain:
+          schema: {type: string}
+    UploadUnavailable:
+      description: Upload staging/cleanup is unavailable.
+      content:
+        text/plain:
+          schema: {type: string}
+  schemas:
+    ID:
+      type: string
+      pattern: '^[a-f0-9]{32}$'
+      example: 0123456789abcdef0123456789abcdef
+    UnixTime:
+      type: integer
+      format: int64
+      description: Seconds since the Unix epoch in UTC.
+    SHA256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    RelativePath:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      description: |
+        Forward-slash instance-relative path, or dot where a root is allowed.
+        No traversal, absolute paths, backslashes, control characters, unsafe
+        links/special files, reserved internal names, or filesystem escapes.
+        Host validation is stricter than this string shape.
+    Role:
+      type: string
+      enum: [owner, admin, operator, viewer]
+    Username:
+      type: string
+      minLength: 3
+      maxLength: 64
+      pattern: '^[A-Za-z0-9_.-]+$'
+    Password:
+      type: string
+      writeOnly: true
+      format: password
+      description: Creation/setup requires 12–1024 bytes. Never accepted as a URL/query/CLI argument or returned in a response.
+      maxLength: 1024
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: {type: string, description: Actionable English explanation.}
+    OK:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: {type: boolean, const: true}
+    Liveness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, const: ok}
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, version, schema]
+      properties:
+        status: {type: string, const: ok}
+        version: {type: string, description: Build version; dev on an unversioned source build.}
+        schema: {type: integer, minimum: 1}
+    SetupStatus:
+      type: object
+      additionalProperties: false
+      required: [required]
+      properties:
+        required: {type: boolean}
+    SetupRequest:
+      type: object
+      additionalProperties: false
+      required: [token, username, password]
+      properties:
+        token: {type: string, minLength: 1, writeOnly: true}
+        username: {$ref: '#/components/schemas/Username'}
+        password: {$ref: '#/components/schemas/Password'}
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: {type: string}
+        password: {type: string, format: password, writeOnly: true, maxLength: 1024}
+        code: {type: string, pattern: '^[0-9]{6}$', writeOnly: true}
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, username, role, two_factor]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        username: {$ref: '#/components/schemas/Username'}
+        role: {$ref: '#/components/schemas/Role'}
+        two_factor: {type: boolean}
+    Session:
+      type: object
+      additionalProperties: false
+      required: [user, csrf_token]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        csrf_token: {type: string}
+    TOTPRequest:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          maxProperties: 0
+        - type: object
+          additionalProperties: false
+          required: [password, secret, code]
+          properties:
+            password: {type: string, format: password, writeOnly: true}
+            secret: {type: string, minLength: 1, writeOnly: true, description: Base32 enrollment secret generated by the previous call.}
+            code: {type: string, pattern: '^[0-9]{6}$', writeOnly: true}
+    TOTPSecret:
+      type: object
+      additionalProperties: false
+      required: [secret]
+      properties:
+        secret: {type: string, description: Newly generated enrollment secret; do not log or publish. Not an existing saved credential.}
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password, role]
+      properties:
+        username: {$ref: '#/components/schemas/Username'}
+        password: {$ref: '#/components/schemas/Password'}
+        role: {$ref: '#/components/schemas/Role'}
+        instance_ids:
+          type: array
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/ID'}
+          description: Existing instance IDs to grant to a viewer/operator.
+    Instance:
+      type: object
+      additionalProperties: false
+      required: [id, name, root, java_path, jar, minecraft_version, loader_version, memory_mb, port, rcon_port, eula, adopted, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        name: {type: string, minLength: 1, maxLength: 100}
+        root: {type: string, description: Registered absolute host directory; not a credential or arbitrary file capability.}
+        java_path: {type: string}
+        jar: {$ref: '#/components/schemas/RelativePath'}
+        minecraft_version: {type: string}
+        loader_version: {type: string}
+        memory_mb: {type: integer, minimum: 512, maximum: 1048576}
+        port: {type: integer, minimum: 1024, maximum: 65535}
+        rcon_port: {type: integer, minimum: 1024, maximum: 65535}
+        eula: {type: boolean}
+        adopted: {type: boolean}
+        created_at: {type: string, format: date-time}
+    CreateInstanceRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, name, java_path, minecraft_version, loader_version, memory_mb, port, rcon_port, eula]
+      properties:
+        mode: {type: string, enum: [create, import, adopt]}
+        name: {type: string, minLength: 1, maxLength: 100, description: No surrounding whitespace.}
+        java_path: {type: string, minLength: 1, description: Exact absolute path in host Java allowlist.}
+        jar: {$ref: '#/components/schemas/RelativePath', description: Safe relative JAR. Required for import/adopt; create defaults to fabric-server-launch.jar.}
+        minecraft_version: {type: string, minLength: 1}
+        loader_version: {type: string, minLength: 1}
+        installer_version: {type: string, description: Explicit Fabric installer selection when required for generated runtime.}
+        memory_mb: {type: integer, minimum: 512, maximum: 1048576}
+        port: {type: integer, minimum: 1024, maximum: 65535}
+        rcon_port: {type: integer, minimum: 1024, maximum: 65535, description: Distinct from game port and other registered ports; must be externally isolated.}
+        eula: {type: boolean, const: true}
+        upload_id: {$ref: '#/components/schemas/ID'}
+        path: {type: string, description: Existing absolute directory below an administrator-allowlisted adoption root.}
+        preview_hash: {$ref: '#/components/schemas/SHA256'}
+      allOf:
+        - if:
+            properties:
+              mode: {const: import}
+          then:
+            required: [upload_id, preview_hash, jar]
+        - if:
+            properties:
+              mode: {const: adopt}
+          then:
+            required: [path, preview_hash, jar]
+    AdoptionRoots:
+      type: object
+      additionalProperties: false
+      required: [roots]
+      properties:
+        roots: {type: array, items: {type: string}}
+    AdoptionPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: {type: string, minLength: 1, description: Absolute existing directory below an allowed root.}
+    UploadPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [upload_id]
+      properties:
+        upload_id: {$ref: '#/components/schemas/ID'}
+    PreviewFile:
+      type: object
+      additionalProperties: false
+      required: [path, size, directory]
+      properties:
+        path: {$ref: '#/components/schemas/RelativePath'}
+        size: {type: integer, format: int64, minimum: 0}
+        directory: {type: boolean}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+    RestorePreview:
+      type: object
+      additionalProperties: false
+      required: [files, file_count, total_bytes, warnings]
+      properties:
+        files: {type: array, items: {$ref: '#/components/schemas/PreviewFile'}}
+        file_count: {type: integer, minimum: 0}
+        total_bytes: {type: integer, format: int64, minimum: 0}
+        warnings: {type: array, items: {type: string}}
+    ImportPreview:
+      $ref: '#/components/schemas/ImportPreviewFields'
+      unevaluatedProperties: false
+    InstanceImportPreview:
+      allOf:
+        - $ref: '#/components/schemas/ImportPreviewFields'
+        - type: object
+          properties:
+            conflicts: {type: array, items: {type: string}, description: Omitted when there are no conflicts.}
+      unevaluatedProperties: false
+    ImportPreviewFields:
+      type: object
+      description: Shared inspection fields without closing extension for instance conflicts.
+      required: [preview_hash, files, file_count, total_bytes, warnings, launchers, worlds]
+      properties:
+        preview_hash: {$ref: '#/components/schemas/SHA256'}
+        files: {type: array, items: {$ref: '#/components/schemas/PreviewFile'}}
+        file_count: {type: integer, minimum: 0}
+        total_bytes: {type: integer, format: int64, minimum: 0}
+        warnings: {type: array, items: {type: string}}
+        launchers: {type: array, items: {type: string}}
+        worlds: {type: array, items: {type: string}}
+        minecraft_version: {type: string}
+        loader_version: {type: string}
+    ImportApplyRequest:
+      type: object
+      additionalProperties: false
+      required: [upload_id, preview_hash, confirm]
+      properties:
+        upload_id: {$ref: '#/components/schemas/ID'}
+        preview_hash: {$ref: '#/components/schemas/SHA256'}
+        confirm: {type: boolean, const: true}
+    RuntimeState:
+      type: string
+      enum: [offline, starting, ready, stopping, crashed, unknown]
+    RuntimeStatus:
+      type: object
+      additionalProperties: false
+      required: [state, ready, uptime_seconds, memory_bytes, cpu_seconds, players]
+      properties:
+        state: {$ref: '#/components/schemas/RuntimeState'}
+        ready: {type: boolean}
+        pid: {type: integer, minimum: 1}
+        uptime_seconds: {type: number, minimum: 0}
+        memory_bytes: {type: integer, format: int64, minimum: 0}
+        cpu_seconds: {type: number, minimum: 0}
+        players: {type: array, items: {type: string}}
+        detail: {type: string}
+        disk_free_bytes: {type: integer, format: int64, minimum: 0, description: Optional when an actual disk observation is available.}
+    LogLine:
+      type: object
+      additionalProperties: false
+      required: [time, message]
+      properties:
+        time: {type: string, format: date-time}
+        message: {type: string}
+    Metric:
+      type: object
+      additionalProperties: false
+      required: [time, state, memory_bytes, cpu_seconds]
+      properties:
+        time: {$ref: '#/components/schemas/UnixTime'}
+        state: {$ref: '#/components/schemas/RuntimeState'}
+        memory_bytes: {type: integer, format: int64, minimum: 0}
+        cpu_seconds: {type: number, minimum: 0}
+    ConsoleRequest:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command: {type: string, minLength: 1, maxLength: 4096, pattern: '^[^\r\n\x00]+$', description: One Minecraft command. Byte/protocol/role validation is stricter than this outer shape.}
+    FileEntry:
+      type: object
+      additionalProperties: false
+      required: [name, path, is_dir, size, modified_at]
+      properties:
+        name: {type: string}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        is_dir: {type: boolean}
+        size: {type: integer, format: int64, minimum: 0}
+        modified_at: {type: string, format: date-time}
+    TextPreview:
+      type: object
+      additionalProperties: false
+      required: [path, content, etag]
+      properties:
+        path: {$ref: '#/components/schemas/RelativePath'}
+        content: {type: string, description: Bounded UTF-8 text; sensitive files are rejected.}
+        etag: {type: string, description: Opaque edit concurrency token; send unchanged on write.}
+    FileMutationRequest:
+      oneOf:
+        - {$ref: '#/components/schemas/FileMkdirRequest'}
+        - {$ref: '#/components/schemas/FileWriteRequest'}
+        - {$ref: '#/components/schemas/FileMoveRequest'}
+        - {$ref: '#/components/schemas/FileTrashRequest'}
+        - {$ref: '#/components/schemas/FileRecoverRequest'}
+      discriminator:
+        propertyName: operation
+        mapping:
+          mkdir: '#/components/schemas/FileMkdirRequest'
+          write: '#/components/schemas/FileWriteRequest'
+          move: '#/components/schemas/FileMoveRequest'
+          trash: '#/components/schemas/FileTrashRequest'
+          recover: '#/components/schemas/FileRecoverRequest'
+    FileMkdirRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, path]
+      properties:
+        operation: {type: string, const: mkdir}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        confirm: {type: boolean, description: Optional for directory creation.}
+    FileWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, path, content, confirm]
+      properties:
+        operation: {type: string, const: write}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        content: {type: string, description: Bounded UTF-8 replacement text.}
+        etag: {type: string, description: Required preview token for an existing file; may be omitted for a new file.}
+        confirm: {type: boolean, const: true}
+    FileMoveRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, path, destination, confirm]
+      properties:
+        operation: {type: string, const: move}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        destination: {$ref: '#/components/schemas/RelativePath'}
+        confirm: {type: boolean, const: true}
+    FileTrashRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, path, confirm]
+      properties:
+        operation: {type: string, const: trash}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        confirm: {type: boolean, const: true}
+    FileRecoverRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, token, confirm]
+      properties:
+        operation: {type: string, const: recover}
+        token: {$ref: '#/components/schemas/ID'}
+        confirm: {type: boolean, const: true}
+    RecoveryEntry:
+      type: object
+      additionalProperties: false
+      required: [token, path, created_at]
+      properties:
+        token: {$ref: '#/components/schemas/ID'}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        created_at: {$ref: '#/components/schemas/UnixTime'}
+    Backup:
+      type: object
+      additionalProperties: false
+      required: [id, instance_id, created_at, size, sha256, note, verified]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        instance_id: {$ref: '#/components/schemas/ID'}
+        created_at: {$ref: '#/components/schemas/UnixTime'}
+        size: {type: integer, format: int64, minimum: 0}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+        note: {type: string}
+        verified: {type: boolean, description: 'Recorded integrity verification, not a completed disaster-recovery drill.'}
+        offsite:
+          oneOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/OffsiteRecord'}
+    BackupArchive:
+      type: object
+      additionalProperties: false
+      description: Internal archive identity returned in integrity/offsite job diagnostics; timestamps here are RFC3339, unlike the public catalog's Unix seconds.
+      required: [id, format, created_at, bytes, archive_sha256, manifest_sha256]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        format: {type: string, enum: [zip, tar.zst]}
+        created_at: {type: string, format: date-time}
+        bytes: {type: integer, format: int64, minimum: 0}
+        archive_sha256: {$ref: '#/components/schemas/SHA256'}
+        manifest_sha256: {$ref: '#/components/schemas/SHA256'}
+    BackupManifest:
+      type: object
+      additionalProperties: false
+      required: [version, id, created_at, bytes, entries]
+      properties:
+        version: {type: integer, const: 1}
+        id: {$ref: '#/components/schemas/ID'}
+        created_at: {type: string, format: date-time}
+        bytes: {type: integer, format: int64, minimum: 0}
+        entries: {type: array, items: {$ref: '#/components/schemas/PreviewFile'}}
+    StorageObject:
+      type: object
+      additionalProperties: false
+      required: [key, size, sha256, verification]
+      properties:
+        key: {type: string, description: Recorded remote object key, not a provider credential or host path.}
+        size: {type: integer, format: int64, minimum: 0}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+        verification: {type: string, description: Exact provider verification evidence; not a universal restore guarantee.}
+    OffsiteRecord:
+      type: object
+      additionalProperties: false
+      required: [state, object, backup, updated_at]
+      properties:
+        state: {type: string, const: uploaded}
+        object: {$ref: '#/components/schemas/StorageObject'}
+        backup: {$ref: '#/components/schemas/BackupArchive'}
+        updated_at: {$ref: '#/components/schemas/UnixTime'}
+    OffsiteState:
+      oneOf:
+        - {$ref: '#/components/schemas/OffsiteRecord'}
+        - type: object
+          additionalProperties: false
+          required: [state]
+          properties:
+            state: {type: string, enum: [disabled, failed]}
+        - {type: 'null'}
+    BackupResult:
+      type: object
+      additionalProperties: false
+      required: [backup, local, offsite]
+      properties:
+        backup: {$ref: '#/components/schemas/Backup'}
+        local: {type: string, const: verified}
+        offsite: {$ref: '#/components/schemas/OffsiteState'}
+    RestoreTransaction:
+      type: object
+      additionalProperties: false
+      required: [recovery, journal, installed]
+      properties:
+        recovery: {type: string, description: Retained original-tree recovery identity; not an automatic world rollback.}
+        journal: {type: string, description: Persisted filesystem transaction journal identity.}
+        installed: {type: boolean, description: Check even on failure; diagnostics can describe a partial/recovered commit.}
+    RestoreResult:
+      type: object
+      additionalProperties: false
+      required: [restore, pre_restore_backup_id, state, note]
+      properties:
+        restore: {$ref: '#/components/schemas/RestoreTransaction'}
+        pre_restore_backup_id: {$ref: '#/components/schemas/ID'}
+        state: {type: string, const: offline}
+        note: {type: string, description: Minecraft remains stopped for administrator review after restore.}
+    BackupRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note: {type: string, maxLength: 1000, description: Limited to 1000 bytes by the handler.}
+        online: {type: boolean, default: false}
+        format: {type: string, enum: [zip, tar.zst], default: zip}
+        confirm: {type: boolean, description: Accepted for CLI compatibility; creation does not require destructive confirmation.}
+    Confirmation:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        confirm: {type: boolean, const: true}
+    PropertyValues:
+      type: object
+      description: Only supported nonsecret string-valued properties are returned. Existing unknown document keys/comments are preserved, not exposed as arbitrary writable settings.
+      additionalProperties: false
+      properties:
+        difficulty: {type: string}
+        gamemode: {type: string}
+        pvp: {type: string}
+        white-list: {type: string}
+        enforce-whitelist: {type: string}
+        view-distance: {type: string}
+        simulation-distance: {type: string}
+        max-players: {type: string}
+        level-seed: {type: string}
+        online-mode: {type: string}
+        motd: {type: string}
+        allow-flight: {type: string}
+        spawn-protection: {type: string}
+        enable-command-block: {type: string}
+        generate-structures: {type: string}
+        level-type: {type: string}
+        max-tick-time: {type: string}
+        op-permission-level: {type: string}
+        level-name: {type: string, readOnly: true, description: Selected through the world activation workflow.}
+    PropertyEdits:
+      $ref: '#/components/schemas/PropertyValues'
+      minProperties: 1
+      propertyNames:
+        enum: [difficulty, gamemode, pvp, white-list, enforce-whitelist, view-distance, simulation-distance, max-players, level-seed, online-mode, motd, allow-flight, spawn-protection, enable-command-block, generate-structures, level-type, max-tick-time, op-permission-level]
+    Properties:
+      type: object
+      additionalProperties: false
+      required: [properties, restart_required]
+      properties:
+        properties: {$ref: '#/components/schemas/PropertyValues'}
+        restart_required: {type: boolean}
+    PropertiesRequest:
+      type: object
+      additionalProperties: false
+      required: [properties, confirm]
+      properties:
+        properties: {$ref: '#/components/schemas/PropertyEdits'}
+        confirm: {type: boolean, const: true}
+    World:
+      type: object
+      additionalProperties: false
+      required: [name, path, active, dimensions]
+      properties:
+        name: {type: string}
+        path: {$ref: '#/components/schemas/RelativePath'}
+        active: {type: boolean}
+        dimensions: {type: array, items: {type: string}}
+    Worlds:
+      type: object
+      additionalProperties: false
+      required: [active, worlds]
+      properties:
+        active: {type: string}
+        worlds: {type: array, items: {$ref: '#/components/schemas/World'}}
+    WorldMutationRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, name, confirm]
+      properties:
+        operation: {type: string, enum: [create, activate]}
+        name: {type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$', description: 'Safe single directory name, not a path.'}
+        confirm: {type: boolean, const: true}
+    MinecraftRecord:
+      type: object
+      description: |
+        Read-only Minecraft-authored access-list entry, intentionally not
+        normalized/enriched by this contract. Vanilla commonly uses name/uuid
+        or ip plus reason/source/created/expires fields. Mods may differ; clients
+        must not assume all optional metadata exists. Not panel user credentials.
+    Players:
+      type: object
+      additionalProperties: false
+      required: [online, whitelist, operators, bans]
+      properties:
+        online: {type: array, items: {type: string}}
+        whitelist: {type: array, items: {$ref: '#/components/schemas/MinecraftRecord'}}
+        operators: {type: array, items: {$ref: '#/components/schemas/MinecraftRecord'}}
+        bans: {type: array, items: {$ref: '#/components/schemas/MinecraftRecord'}}
+        ip_bans:
+          type: array
+          description: Administrator-level callers only.
+          items: {$ref: '#/components/schemas/MinecraftRecord'}
+    PlayerActionRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: {type: string, enum: [whitelist_add, whitelist_remove, op, deop, op_level, ban, pardon, kick, say, ban_ip, pardon_ip]}
+        player: {type: string, minLength: 1, description: Minecraft name for name actions; literal IP address for IP actions.}
+        value: {type: string, maxLength: 500, pattern: '^[^\r\n\x00]*$', description: 'One-line broadcast message, optional moderation reason, or OP level string. Limited to 500 bytes by the handler.'}
+      allOf:
+        - if:
+            properties:
+              action: {const: say}
+          then:
+            required: [value]
+            properties:
+              value: {minLength: 1}
+          else:
+            required: [player]
+        - if:
+            properties:
+              action: {const: op_level}
+          then:
+            required: [value]
+            properties:
+              value: {enum: ['1', '2', '3', '4']}
+        - if:
+            properties:
+              action: {enum: [ban_ip, pardon_ip]}
+          then:
+            properties:
+              player:
+                oneOf:
+                  - {type: string, format: ipv4}
+                  - {type: string, format: ipv6}
+          else:
+            properties:
+              player: {pattern: '^[A-Za-z0-9_]{1,16}$'}
+    Mod:
+      type: object
+      additionalProperties: false
+      required: [filename, sha512, name, managed, pinned, update_available]
+      properties:
+        filename: {type: string}
+        sha512: {type: string, pattern: '^[a-f0-9]{128}$'}
+        project_id: {type: string}
+        name: {type: string}
+        version: {type: string}
+        version_id: {type: string}
+        managed: {type: boolean}
+        pinned: {type: boolean}
+        update_available: {type: boolean}
+        reason: {type: string}
+    ModSearchResult:
+      type: object
+      additionalProperties: false
+      required: [project_id, slug, title, description]
+      properties:
+        project_id: {type: string}
+        slug: {type: string}
+        title: {type: string}
+        description: {type: string}
+        server_side: {type: string, description: 'Upstream discovery hint, not a compatibility guarantee.'}
+    ModPlanRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        projects:
+          type: array
+          items: {type: string, minLength: 1}
+          description: Explicit requested project identifiers; empty/omitted means updates to managed inventory.
+    ModPlanAction:
+      type: object
+      additionalProperties: false
+      required: [project_id, name, from_version, to_version, filename, reason]
+      properties:
+        project_id: {type: string}
+        name: {type: string}
+        from_version: {type: string}
+        to_version: {type: string}
+        filename: {type: string}
+        reason: {type: string}
+    ModPlan:
+      type: object
+      additionalProperties: false
+      required: [plan_hash, actions, blocked, warnings]
+      properties:
+        plan_hash: {$ref: '#/components/schemas/SHA256'}
+        actions: {type: array, items: {$ref: '#/components/schemas/ModPlanAction'}}
+        blocked: {type: array, items: {type: string}}
+        warnings: {type: array, items: {type: string}}
+    ModApplyRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_hash, confirm]
+      properties:
+        projects: {type: array, items: {type: string, minLength: 1}, description: Use the same project selection as the reviewed plan.}
+        plan_hash: {$ref: '#/components/schemas/SHA256'}
+        confirm: {type: boolean, const: true}
+    ModManageRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, project_id, confirm]
+      properties:
+        operation: {type: string, enum: [pin, unpin, disable, remove]}
+        project_id: {type: string, minLength: 1}
+        confirm: {type: boolean, const: true}
+    WindowTime:
+      type: string
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      description: Local HH:MM in the explicit timezone. Window start inclusive, end exclusive; equal endpoints mean all day.
+    Timezone:
+      type: string
+      minLength: 1
+      description: IANA timezone accepted by the host timezone database.
+      example: UTC
+    ModPolicy:
+      type: object
+      additionalProperties: false
+      required: [mode, interval_hours, window_start, window_end, timezone, postpone_players]
+      properties:
+        mode: {type: string, enum: [manual, notify, automatic-safe], default: manual}
+        interval_hours: {type: integer, minimum: 1, maximum: 168, default: 24}
+        window_start: {$ref: '#/components/schemas/WindowTime', default: '02:00'}
+        window_end: {$ref: '#/components/schemas/WindowTime', default: '04:00'}
+        timezone: {$ref: '#/components/schemas/Timezone', default: UTC}
+        postpone_players: {type: boolean, default: true}
+    FabricVersions:
+      type: object
+      additionalProperties: false
+      required: [game_versions, loader_versions, installer_versions]
+      properties:
+        game_versions: {type: array, items: {type: string}}
+        loader_versions: {type: array, items: {type: string}}
+        installer_versions: {type: array, items: {type: string}}
+    JavaRuntime:
+      type: object
+      additionalProperties: false
+      required: [path, major, version]
+      properties:
+        path: {type: string}
+        major: {type: integer, minimum: 0, description: Zero if no usable version was detected; inspect error.}
+        version: {type: string}
+        error: {type: string}
+    RuntimeSelection:
+      type: object
+      additionalProperties: false
+      required: [minecraft_version, loader_version, installer_version, java_path]
+      properties:
+        minecraft_version: {type: string, minLength: 1}
+        loader_version: {type: string, minLength: 1}
+        installer_version: {type: string, minLength: 1}
+        java_path: {type: string, minLength: 1, description: Exact absolute allowlisted executable path.}
+    RuntimePlan:
+      type: object
+      additionalProperties: false
+      required: [plan_hash, warnings, java_required, changes]
+      properties:
+        plan_hash: {$ref: '#/components/schemas/SHA256'}
+        warnings: {type: array, items: {type: string}}
+        java_required: {type: integer, minimum: 1}
+        changes: {type: array, items: {type: string}}
+    RuntimeApplyRequest:
+      type: object
+      additionalProperties: false
+      required: [minecraft_version, loader_version, installer_version, java_path, plan_hash, confirm]
+      properties:
+        minecraft_version: {type: string, minLength: 1}
+        loader_version: {type: string, minLength: 1}
+        installer_version: {type: string, minLength: 1}
+        java_path: {type: string, minLength: 1}
+        plan_hash: {$ref: '#/components/schemas/SHA256'}
+        confirm: {type: boolean, const: true}
+    JobState:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled, interrupted]
+    Job:
+      type: object
+      additionalProperties: false
+      required: [id, instance_id, kind, payload, state, progress, step, error, result, cancel_requested, cancellable, attempts, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        instance_id:
+          type: string
+          description: Instance ID; empty string for a panel-wide job.
+        kind: {type: string, description: Registered operation kind; not an arbitrary executable.}
+        payload:
+          description: Opaque accepted operation input. Read endpoints deliberately return null; clients must not depend on its shape or store credentials here.
+          type: [object, 'null']
+        state: {$ref: '#/components/schemas/JobState'}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        step: {type: string}
+        error: {type: string, description: Failure diagnostic; empty before failure.}
+        result:
+          description: |
+            Operation-specific JSON, initially {}, and possibly null on failure.
+            Successful console jobs contain output; creation contains instance.
+            Other handlers return their own diagnostics and recovery identities;
+            do not infer success from result presence instead of state.
+          anyOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/ConsoleResult'}
+            - {$ref: '#/components/schemas/InstanceResult'}
+            - {$ref: '#/components/schemas/RuntimeStatus'}
+            - {$ref: '#/components/schemas/BackupResult'}
+            - {$ref: '#/components/schemas/BackupManifest'}
+            - {$ref: '#/components/schemas/RestoreResult'}
+            - {$ref: '#/components/schemas/RestoreTransaction'}
+            - {$ref: '#/components/schemas/RecoveryEntry'}
+            - {$ref: '#/components/schemas/OK'}
+            - {$ref: '#/components/schemas/StoppedResult'}
+            - {$ref: '#/components/schemas/WorldCreatedResult'}
+            - {$ref: '#/components/schemas/WorldActivationResult'}
+            - {$ref: '#/components/schemas/PropertiesResult'}
+            - {$ref: '#/components/schemas/RetentionResult'}
+            - {$ref: '#/components/schemas/UpdateCheckResult'}
+            - {$ref: '#/components/schemas/UpdateOperationResult'}
+            - {$ref: '#/components/schemas/UpdateJournal'}
+            - type: object
+              description: Other registered handler result; not a saved settings/user/session object. Exact handler diagnostics may evolve before the first release.
+        cancel_requested: {type: boolean}
+        cancellable: {type: boolean, description: False after the job's safe cancellation/commit barrier.}
+        attempts: {type: integer, minimum: 0}
+        created_at: {$ref: '#/components/schemas/UnixTime'}
+    ConsoleResult:
+      type: object
+      additionalProperties: false
+      required: [output]
+      properties:
+        output: {type: string}
+    StoppedResult:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: {type: string, const: offline}
+    WorldCreatedResult:
+      type: object
+      additionalProperties: false
+      required: [world, note]
+      properties:
+        world: {type: string}
+        note: {type: string, description: Directory prepared only; activate and start Minecraft to generate world data.}
+    WorldActivationResult:
+      type: object
+      additionalProperties: false
+      required: [active, restart_required]
+      properties:
+        active: {type: string}
+        restart_required: {type: boolean, const: true}
+    PropertiesResult:
+      type: object
+      additionalProperties: false
+      required: [restart_required]
+      properties:
+        restart_required: {type: boolean, const: true}
+    RetentionResult:
+      type: object
+      additionalProperties: false
+      required: [removed]
+      properties:
+        removed: {type: integer, minimum: 0, description: Completed local backup deletions; inspect errors for partial retention failure.}
+    InstanceResult:
+      type: object
+      additionalProperties: false
+      required: [instance]
+      properties:
+        instance: {$ref: '#/components/schemas/Instance'}
+        state: {type: string, const: offline}
+        java_major: {type: integer, minimum: 1}
+        warnings:
+          oneOf:
+            - {type: array, items: {type: string}}
+            - {type: 'null'}
+    JobStep:
+      type: object
+      additionalProperties: false
+      required: [time, progress, message]
+      properties:
+        time: {$ref: '#/components/schemas/UnixTime'}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        message: {type: string}
+    JobDetail:
+      type: object
+      additionalProperties: false
+      required: [job, steps]
+      properties:
+        job: {$ref: '#/components/schemas/Job'}
+        steps: {type: array, items: {$ref: '#/components/schemas/JobStep'}}
+    ScheduleRequest:
+      type: object
+      additionalProperties: false
+      required: [instance_id, kind, hour, minute, weekdays, timezone, enabled]
+      properties:
+        id: {$ref: '#/components/schemas/ID', description: Omit to create; include to replace the schedule.}
+        instance_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [backup, restart, mod_check]}
+        hour: {type: integer, minimum: 0, maximum: 23}
+        minute: {type: integer, minimum: 0, maximum: 59}
+        weekdays: {type: array, minItems: 1, items: {type: integer, minimum: 0, maximum: 6}, description: Sunday 0 through Saturday 6.}
+        timezone: {$ref: '#/components/schemas/Timezone'}
+        enabled: {type: boolean}
+        next_run: {$ref: '#/components/schemas/UnixTime', readOnly: true}
+        last_job_id: {type: string, readOnly: true}
+    Schedule:
+      type: object
+      additionalProperties: false
+      required: [id, instance_id, kind, hour, minute, weekdays, timezone, enabled, next_run, last_job_id]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        instance_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [backup, restart, mod_check]}
+        hour: {type: integer, minimum: 0, maximum: 23}
+        minute: {type: integer, minimum: 0, maximum: 59}
+        weekdays: {type: array, minItems: 1, items: {type: integer, minimum: 0, maximum: 6}}
+        timezone: {$ref: '#/components/schemas/Timezone'}
+        enabled: {type: boolean}
+        next_run: {$ref: '#/components/schemas/UnixTime'}
+        last_job_id: {type: string, description: Empty before the first recorded run.}
+    AuditEntry:
+      type: object
+      additionalProperties: false
+      required: [id, time, user_id, action, instance_id, detail]
+      properties:
+        id: {type: integer, format: int64}
+        time: {$ref: '#/components/schemas/UnixTime'}
+        user_id: {type: string, description: User ID or anonymous marker for rejected sign-in events.}
+        action: {type: string}
+        instance_id: {type: string, description: Empty for global events.}
+        detail: {type: string}
+    IntegrationSummary:
+      type: object
+      additionalProperties: false
+      required: [configured]
+      properties:
+        configured: {type: boolean, description: 'Saved usable configuration, not live delivery verification.'}
+        enabled: {type: boolean, description: Optional nonsecret enable preference.}
+    BackupRetention:
+      type: object
+      additionalProperties: false
+      required: [enabled, keep_last]
+      properties:
+        enabled: {type: boolean}
+        keep_last: {type: integer, minimum: 1, maximum: 10000}
+    Settings:
+      type: object
+      additionalProperties: false
+      required: [public_url, version, runtime_provider, notifications, storage, backup_retention]
+      properties:
+        public_url: {type: string, format: uri}
+        version: {type: string}
+        runtime_provider: {type: string, const: systemd}
+        adopt_roots: {type: array, items: {type: string}, description: Administrator/owner only.}
+        java_paths: {type: array, items: {type: string}, description: Administrator/owner only.}
+        notifications: {$ref: '#/components/schemas/IntegrationSummary'}
+        storage: {$ref: '#/components/schemas/IntegrationSummary'}
+        backup_retention: {$ref: '#/components/schemas/BackupRetention'}
+    SettingsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        notifications: {$ref: '#/components/schemas/NotificationSettings'}
+        storage: {$ref: '#/components/schemas/StorageSettings'}
+        backup_retention: {$ref: '#/components/schemas/BackupRetention'}
+    NotificationSettings:
+      type: object
+      additionalProperties: false
+      description: |
+        Write-only integration patch. Omitted fields retain saved values and
+        null fields are rejected. An enabled-only update can toggle existing
+        saved configuration; replacement must provide the complete
+        appropriate kind/destination/credentials. No saved values are echoed.
+        HTTP destinations require public HTTPS port 443. SMTP uses a public
+        hostname and implicit TLS port 465. Do not mix HTTP and SMTP fields.
+      properties:
+        enabled: {type: boolean}
+        kind: {type: string, enum: [discord, webhook, smtp]}
+        url: {type: string, format: uri, writeOnly: true, description: Webhook credential-bearing URL; Discord must use its official API webhook origin/path.}
+        smtp_host: {type: string, writeOnly: true}
+        smtp_username: {type: string, writeOnly: true}
+        smtp_password: {type: string, format: password, writeOnly: true}
+        from: {type: string, format: email, writeOnly: true}
+        to: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string, format: email}, writeOnly: true}
+    StorageSettings:
+      type: object
+      additionalProperties: false
+      description: |
+        Write-only S3-compatible patch. Omitted fields retain saved values and
+        null fields are rejected. An enabled-only update toggles existing
+        configuration; replacement needs endpoint/region/bucket and
+        both keys. Endpoint is a public HTTPS origin on port 443 without a path,
+        credentials, query, or fragment. Saved values are not returned by GET.
+      properties:
+        enabled: {type: boolean}
+        endpoint: {type: string, format: uri, writeOnly: true}
+        region: {type: string, writeOnly: true}
+        bucket: {type: string, writeOnly: true}
+        access_key: {type: string, writeOnly: true}
+        secret_key: {type: string, format: password, writeOnly: true}
+        session_token: {type: string, writeOnly: true, description: Optional temporary-provider credential.}
+        prefix: {type: string, writeOnly: true, description: Optional safe relative object-key prefix.}
+    UpdatePolicy:
+      type: object
+      additionalProperties: false
+      required: [mode, channel, interval_hours, window_start, window_end, timezone]
+      properties:
+        mode: {type: string, enum: [disabled, notify, automatic]}
+        channel: {type: string, enum: [stable, beta]}
+        interval_hours: {type: integer, minimum: 1, maximum: 168}
+        window_start: {$ref: '#/components/schemas/WindowTime'}
+        window_end: {$ref: '#/components/schemas/WindowTime'}
+        timezone: {$ref: '#/components/schemas/Timezone'}
+        postpone_until: {$ref: '#/components/schemas/UnixTime', description: Optional bounded deferral of automatic application.}
+    UpdatePostponeRequest:
+      type: object
+      additionalProperties: false
+      required: [hours]
+      properties:
+        hours: {type: integer, minimum: 1, maximum: 168}
+        confirm: {type: boolean, description: Accepted but postponement itself does not require destructive confirmation.}
+    UpdateCandidate:
+      type: object
+      additionalProperties: false
+      required: [version, notes, size, prerelease]
+      properties:
+        version: {type: string}
+        notes: {type: string}
+        size: {type: integer, format: int64, minimum: 0}
+        prerelease: {type: boolean}
+    UpdateStatus:
+      type: object
+      additionalProperties: false
+      required: [current_version, repository, available, state, history, policy]
+      properties:
+        current_version: {type: string}
+        repository: {type: string, description: Expected official owner/repository identity.}
+        available:
+          oneOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/UpdateCandidate'}
+        state: {type: string, description: Current updater state; do not infer completion without job/health evidence.}
+        detail: {type: string}
+        history:
+          type: array
+          description: Read-only updater journal events, with RFC3339 time rather than Unix seconds.
+          items: {$ref: '#/components/schemas/UpdateEvent'}
+        policy: {$ref: '#/components/schemas/UpdatePolicy'}
+    UpdateActionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm: {type: boolean, description: Must be true for apply and rollback; check/stage may use an empty object.}
+    ReleaseAsset:
+      type: object
+      additionalProperties: false
+      required: [name, os, arch, size, sha256]
+      properties:
+        name: {type: string, description: Official version-and-architecture-specific tar.gz asset name.}
+        os: {type: string, const: linux}
+        arch: {type: string, enum: [amd64, arm64]}
+        size: {type: integer, format: int64, minimum: 1, maximum: 536870912}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+    ReleaseManifest:
+      type: object
+      additionalProperties: false
+      required: [version, repository, schema, assets]
+      properties:
+        version: {type: string, maxLength: 120, description: Canonical SemVer selection; not a mutable latest alias.}
+        repository: {type: string, const: gabrielpgava/newempire-server-control}
+        schema: {type: integer, minimum: 1}
+        assets:
+          type: array
+          minItems: 2
+          maxItems: 2
+          description: Both Linux architectures in canonical amd64 then arm64 order.
+          items: {$ref: '#/components/schemas/ReleaseAsset'}
+    UpdateCheckResult:
+      type: object
+      additionalProperties: false
+      required: [current_version, channel, available, notes, prerelease]
+      properties:
+        current_version: {type: string}
+        channel: {type: string, enum: [stable, beta]}
+        available:
+          oneOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/ReleaseManifest'}
+        notes: {type: string}
+        prerelease: {type: boolean}
+    UpdateOperationResult:
+      type: object
+      additionalProperties: false
+      required: [operation, version]
+      properties:
+        operation: {type: string, enum: [stage, apply, rollback]}
+        version: {type: string, description: Selected version for staging; can be empty for applying/rolling back the retained transaction.}
+    UpdateTransactionState:
+      type: string
+      enum: [downloading, staged, stopping, snapshotting, installing, checking_health, complete, rolling_back, rolled_back, failed, manual_recovery]
+    UpdateEvent:
+      type: object
+      additionalProperties: false
+      required: [transaction_id, version, state, message, time]
+      properties:
+        transaction_id: {$ref: '#/components/schemas/ID'}
+        version: {type: string}
+        state: {$ref: '#/components/schemas/UpdateTransactionState'}
+        message: {type: string}
+        time: {type: string, format: date-time}
+    UpdateTransaction:
+      type: object
+      additionalProperties: false
+      required: [id, version, previous_version, schema, channel, state, updated_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        version: {type: string}
+        previous_version: {type: string}
+        schema: {type: integer, minimum: 1}
+        channel: {type: string, enum: [stable, beta]}
+        state: {$ref: '#/components/schemas/UpdateTransactionState'}
+        binary_sha256: {$ref: '#/components/schemas/SHA256'}
+        previous_sha256: {$ref: '#/components/schemas/SHA256'}
+        snapshot_sha256: {$ref: '#/components/schemas/SHA256'}
+        error: {type: string}
+        updated_at: {type: string, format: date-time}
+    UpdateJournal:
+      type: object
+      additionalProperties: false
+      required: [transaction, last_applied, history]
+      properties:
+        transaction:
+          oneOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/UpdateTransaction'}
+        last_applied:
+          oneOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/UpdateTransaction'}
+        history: {type: array, items: {$ref: '#/components/schemas/UpdateEvent'}}
