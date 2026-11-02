@@ -23,6 +23,7 @@ import (
 	"github.com/gabrielpgava/newempire-server-control/internal/config"
 	"github.com/gabrielpgava/newempire-server-control/internal/database"
 	"github.com/gabrielpgava/newempire-server-control/internal/lock"
+	"github.com/gabrielpgava/newempire-server-control/internal/model"
 	serverruntime "github.com/gabrielpgava/newempire-server-control/internal/runtime"
 	"github.com/gabrielpgava/newempire-server-control/internal/secrets"
 	"github.com/gabrielpgava/newempire-server-control/web"
@@ -54,12 +55,18 @@ func run(args []string) error {
 	jsonOutput := flags.Bool("json", false, "Print machine-readable output")
 	username := flags.String("username", "", "Username for login")
 	passwordStdin := flags.Bool("password-stdin", false, "Read login password from standard input")
+	code := flags.String("code", "", "Six-digit login authentication code")
+	codeStdin := flags.Bool("code-stdin", false, "Read login authentication code from the second standard-input line")
+	offline := flags.Bool("offline", false, "Use stopped-panel local recovery without HTTP")
 	confirmed := flags.Bool("confirm", false, "Confirm a destructive operation after reviewing its preview")
 	independent := flags.Bool("independent", false, "Run as the restricted independent updater, not through HTTP")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	args = flags.Args()
+	if err := validateCLIFlags(command, flags, args); err != nil {
+		return err
+	}
 	if command == "version" {
 		if *jsonOutput {
 			return output(map[string]any{"version": version, "commit": commit, "schema": database.SchemaVersion, "release_repository": "gabrielpgava/newempire-server-control"})
@@ -94,20 +101,22 @@ func run(args []string) error {
 		}
 		return remoteCommand(c, command, args, *confirmed)
 	case "recover":
-		return recoverPanel(c, args)
+		return recoveryCommand(c, args, *confirmed, *passwordStdin, os.Stdin)
 	case "login":
 		if !*passwordStdin || *username == "" {
 			return errors.New("login requires --username and --password-stdin; passwords are never accepted as command-line arguments")
 		}
-		b, err := io.ReadAll(io.LimitReader(os.Stdin, 1025))
+		password, second, err := readCLICredentials(os.Stdin, *code, *codeStdin)
 		if err != nil {
 			return err
 		}
-		if len(b) > 1024 {
-			return errors.New("password is too long")
+		return loginCLI(c, *username, password, second)
+	case "backup":
+		if *offline {
+			return offlineBackupCommand(c, args, *confirmed)
 		}
-		return loginCLI(c, *username, strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r"))
-	case "instance", "backup":
+		return remoteCommand(c, command, args, *confirmed)
+	case "instance":
 		return remoteCommand(c, command, args, *confirmed)
 	default:
 		return fmt.Errorf("unknown command %q; run help", command)
@@ -121,18 +130,32 @@ Commands:
   serve [--config FILE]                  Serve the embedded UI and API (never as root)
   version [--json]                       Print build identity
   doctor [--config FILE]                 Check configuration, database, and host requirements
-  login --username NAME --password-stdin Store a protected CLI session
+  login --username NAME --password-stdin [--code CODE | --code-stdin]
+                                         Store a protected CLI session
   install-service [--config FILE] [ID]    Provision an allowlisted systemd instance
   instance list|inspect|start|stop|restart [ID]
-  backup create|list|verify|restore ID [BACKUP_ID]
+  backup [--offline] create|list|verify|preview|restore INSTANCE_ID [BACKUP_ID]
   update check|stage|apply|rollback       Manage signed panel releases
-  recover [--config FILE]                Inspect panel integrity and interrupted jobs
+  recover [--config FILE]                Inspect stopped-panel integrity and interrupted jobs
+  recover list INSTANCE_ID               List retained recovery records
+  recover restore|restore-previous INSTANCE_ID
+                                         Preview pending metadata-only reconciliation
+  recover --confirm restore|restore-previous INSTANCE_ID
+                                         Reconcile a recorded restore (never swaps worlds)
+  recover --confirm filesystem INSTANCE_ID .nesc-recovery-ID
+  recover --confirm content INSTANCE_ID TRANSACTION_ID
+  recover --confirm file INSTANCE_ID TOKEN
+  recover --confirm runtime INSTANCE_ID  Recover a retained runtime (never worlds)
+  recover --confirm --password-stdin owner OWNER_USERNAME
+                                         Reset owner password/factor and revoke owner sessions
 
 Put flags before subcommands, for example:
   new-empire-control backup --confirm restore INSTANCE_ID BACKUP_ID
   new-empire-control instance --config /etc/new-empire-control/config.json list
 
-Destructive restores require --confirm after reviewing the authenticated preview.
+Offline commands require the initialized panel state, its master key, the panel
+account, and a stopped panel. Minecraft must also be stopped for offline mutations.
+Destructive recovery requires --confirm after reviewing the selected record.
 See docs/disaster-recovery.md before emergency binary or database recovery.
 `)
 	return nil
@@ -265,49 +288,16 @@ func doctor(c config.Config) error {
 	return output(checks)
 }
 
-func recoverPanel(c config.Config, args []string) error {
-	if len(args) > 0 {
-		return errors.New("recover takes no subcommand; use update --independent rollback for binary recovery")
-	}
-	release, err := lock.Acquire(filepath.Join(c.DataDir, "panel.lock"))
-	if err != nil {
-		return errors.New("stop the panel service before offline recovery inspection")
-	}
-	defer release()
-	db, err := database.Open(filepath.Join(c.DataDir, "panel.db"))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := db.Integrity(context.Background()); err != nil {
-		return err
-	}
-	rows, err := db.Query("SELECT id,instance_id,kind,state,step,error FROM jobs WHERE state IN ('running','interrupted','failed') ORDER BY created_at DESC LIMIT 100")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	all := []map[string]string{}
-	for rows.Next() {
-		var id, instance, kind, state, step, message string
-		if err := rows.Scan(&id, &instance, &kind, &state, &step, &message); err != nil {
-			return err
-		}
-		all = append(all, map[string]string{"id": id, "instance_id": instance, "kind": kind, "state": state, "step": step, "error": message})
-	}
-	return output(map[string]any{"database": "verified", "jobs_requiring_review": all, "note": "No world, content, or database was replaced. Inspect retained restore points before retrying interrupted mutations."})
-}
-
 type cliSession struct {
 	Token string `json:"token"`
 	CSRF  string `json:"csrf"`
 }
 
-func loginCLI(c config.Config, username, password string) error {
+func loginCLI(c config.Config, username, password, code string) error {
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	client := &http.Client{Timeout: 15 * time.Second, Jar: jar, CheckRedirect: rejectCLIRedirect}
 	var session auth.Session
-	if err := apiRequest(c, client, cliSession{}, "POST", "/auth/login", map[string]string{"username": username, "password": password}, &session); err != nil {
+	if err := apiRequest(c, client, cliSession{}, "POST", "/auth/login", map[string]string{"username": username, "password": password, "code": code}, &session); err != nil {
 		return err
 	}
 	url, err := http.NewRequest("GET", c.PublicURL, nil)
@@ -323,11 +313,7 @@ func loginCLI(c config.Config, username, password string) error {
 	if token == "" {
 		return errors.New("server did not return a session cookie")
 	}
-	b, _ := json.Marshal(cliSession{Token: token, CSRF: session.CSRF})
-	if err := os.MkdirAll(c.DataDir, 0700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(c.DataDir, "cli-session.json"), b, 0600); err != nil {
+	if err := writeCLISession(c, cliSession{Token: token, CSRF: session.CSRF}); err != nil {
 		return err
 	}
 	fmt.Println("Signed in; CLI session stored with owner-only permissions.")
@@ -352,7 +338,9 @@ func apiRequest(c config.Config, client *http.Client, s cliSession, method, path
 		req.AddCookie(&http.Cookie{Name: "nec_session", Value: s.Token})
 		req.Header.Set("X-CSRF-Token", s.CSRF)
 	}
-	resp, err := client.Do(req)
+	protected := *client
+	protected.CheckRedirect = rejectCLIRedirect
+	resp, err := protected.Do(req)
 	if err != nil {
 		return err
 	}
@@ -377,23 +365,21 @@ func remoteCommand(c config.Config, command string, args []string, confirm bool)
 	}
 	action := args[0]
 	args = args[1:]
-	b, err := os.ReadFile(filepath.Join(c.DataDir, "cli-session.json"))
-	if err != nil {
-		return errors.New("sign in with the login command first")
-	}
-	var session cliSession
-	if err := json.Unmarshal(b, &session); err != nil {
-		return err
-	}
 	method, path := "GET", ""
 	var body any
 	switch command {
 	case "instance":
 		if action == "list" {
+			if len(args) != 0 {
+				return errors.New("instance list takes no instance ID")
+			}
 			path = "/instances"
 		} else {
 			if len(args) != 1 {
 				return errors.New("provide exactly one instance ID")
+			}
+			if !model.ValidID(args[0]) {
+				return errors.New("invalid instance identifier")
 			}
 			path = "/instances/" + args[0]
 			switch action {
@@ -407,8 +393,8 @@ func remoteCommand(c config.Config, command string, args []string, confirm bool)
 			}
 		}
 	case "backup":
-		if len(args) < 1 {
-			return errors.New("provide the instance ID")
+		if err := validateBackupArgs(append([]string{action}, args...), confirm); err != nil {
+			return err
 		}
 		path = "/instances/" + args[0] + "/backups"
 		switch action {
@@ -416,7 +402,7 @@ func remoteCommand(c config.Config, command string, args []string, confirm bool)
 		case "create":
 			method = "POST"
 			body = map[string]string{"note": "Created through CLI"}
-		case "verify", "restore":
+		case "verify", "preview", "restore":
 			if len(args) != 2 {
 				return errors.New("provide instance ID and backup ID")
 			}
@@ -424,12 +410,17 @@ func remoteCommand(c config.Config, command string, args []string, confirm bool)
 				return errors.New("review the restore preview, then repeat with --confirm before the subcommand")
 			}
 			path += "/" + args[1] + "/" + action
-			method = "POST"
-			body = map[string]bool{"confirm": confirm}
+			if action != "preview" {
+				method = "POST"
+				body = map[string]bool{"confirm": confirm}
+			}
 		default:
 			return errors.New("unsupported backup subcommand")
 		}
 	case "update":
+		if len(args) != 0 {
+			return errors.New("update takes exactly one subcommand")
+		}
 		switch action {
 		case "check", "stage", "apply", "rollback":
 			method = "POST"
@@ -438,6 +429,10 @@ func remoteCommand(c config.Config, command string, args []string, confirm bool)
 		default:
 			return errors.New("unsupported update subcommand")
 		}
+	}
+	session, err := readCLISession(c)
+	if err != nil {
+		return fmt.Errorf("sign in with the login command first: %w", err)
 	}
 	var result any
 	if err := apiRequest(c, &http.Client{Timeout: 30 * time.Second}, session, method, path, body, &result); err != nil {
