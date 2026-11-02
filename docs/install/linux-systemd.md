@@ -1,8 +1,10 @@
 # Native Linux / systemd installation
 
-This is the intended native deployment. Host integration has **not yet been
-verified on a real Linux/systemd server**; do not infer distribution certification
-or production readiness from unit tests. The deployed Go binary embeds the
+This is the intended native deployment. The signed-release installer and complete
+Minecraft/updater integration have **not yet passed real-host acceptance**.
+[Limited development-fixture service/schema checks](../evidence/linux/README.md)
+passed on a disposable ARM64 VM; they do not certify this installation workflow,
+a distribution or production readiness. The deployed Go binary embeds the
 frontend and does not require Node.js.
 
 ## Prerequisites and trust

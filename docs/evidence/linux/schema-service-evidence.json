@@ -1,0 +1,35 @@
+{
+  "scope": "Fault-inject only the disposable panel DB; verify real helper refusal and service state.",
+  "source_commit": "ad8be19cd9d03d03d862dea9b3d776764020a48b",
+  "official_update": false,
+  "cases": [
+    {
+      "actual_schema": 0,
+      "helper_exit": 1,
+      "journal_state": "manual_recovery",
+      "panel_pid": 0,
+      "database_unchanged_by_helper": true,
+      "binary_and_symlink_unchanged": true
+    },
+    {
+      "actual_schema": 2,
+      "helper_exit": 1,
+      "journal_state": "manual_recovery",
+      "panel_pid": 0,
+      "database_unchanged_by_helper": true,
+      "binary_and_symlink_unchanged": true
+    },
+    {
+      "actual_schema": 1,
+      "helper_exit": 0,
+      "journal_state": "failed",
+      "panel_pid": 2222,
+      "authenticated_recovery_health_passed": true,
+      "restart_acquired_released_panel_lock": true
+    }
+  ],
+  "original_database_restored_from_verified_copy": true,
+  "panel_restarted_after_explicit_fixture_cleanup": true,
+  "restarted_panel_pid": 2239,
+  "minecraft_started": false
+}
