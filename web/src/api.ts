@@ -36,6 +36,7 @@ export interface JavaRuntime { path: string; version: string; major: number; err
 export interface Plan { plan_hash: string; summary?: string; warnings: string[]; changes?: string[]; java_required?: number; [key: string]: unknown }
 export interface ModPlan extends Plan { actions: { project_id: string; name: string; from_version: string; to_version: string; filename: string; reason: string }[]; blocked: string[] }
 export interface ImportPreview { preview_hash: string; files: { path: string; size: number }[]; total_bytes: number; file_count: number; warnings: string[]; launchers: string[]; worlds: string[]; minecraft_version?: string; loader_version?: string; conflicts?: string[] }
+export interface InstanceSourcePreview extends ImportPreview { server_root: string; minecraft_version: string; loader_version: string; java_required: number; reservation_id?: string; service_account?: string }
 export interface RestorePreview { files: { path: string; size: number }[]; total_bytes: number; file_count: number; warnings: string[] }
 export interface Schedule { id: string; instance_id: string; kind: string; hour: number; minute: number; weekdays: number[]; timezone: string; enabled: boolean; next_run?: number; last_job_id?: string }
 export interface AuditEntry { id: string; time: number; user_id: string; action: string; instance_id?: string; detail?: string }
@@ -48,7 +49,7 @@ export interface UpdateState {
 export interface CreateInstance {
   name: string; mode: 'create' | 'import' | 'adopt'; minecraft_version: string
   loader_version: string; java_path: string; memory_mb: number; port: number
-  rcon_port: number; eula: boolean; path?: string; upload_id?: string; preview_hash?: string; jar?: string; installer_version?: string
+  rcon_port: number; eula: boolean; path?: string; upload_id?: string; preview_hash?: string; jar?: string; installer_version?: string; server_root?: string; reservation_id?: string
 }
 
 let csrfToken = ''

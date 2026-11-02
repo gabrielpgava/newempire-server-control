@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gabrielpgava/newempire-server-control/internal/auth"
 	"github.com/gabrielpgava/newempire-server-control/internal/fabric"
@@ -38,6 +40,8 @@ type createRequest struct {
 	UploadID         string `json:"upload_id"`
 	Path             string `json:"path"`
 	PreviewHash      string `json:"preview_hash"`
+	ServerRoot       string `json:"server_root,omitempty"`
+	ReservationID    string `json:"reservation_id,omitempty"`
 	Owner            string `json:"owner,omitempty"`
 }
 
@@ -99,12 +103,25 @@ func (a *App) createInstance(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errors.New("select an administrator-allowlisted Java installation"))
 		return
 	}
-	if len(strings.TrimSpace(body.Name)) == 0 || len(body.Name) > 100 || body.MemoryMB < 512 || body.MemoryMB > 1048576 || body.Port < 1024 || body.Port > 65535 || body.RCONPort < 1024 || body.RCONPort > 65535 || body.Port == body.RCONPort {
+	if !validCreationName(body.Name) || body.MemoryMB < 512 || body.MemoryMB > 1048576 || body.Port < 1024 || body.Port > 65535 || body.RCONPort < 1024 || body.RCONPort > 65535 || body.Port == body.RCONPort {
 		fail(w, 400, errors.New("invalid instance name, memory, or port configuration"))
 		return
 	}
 	if body.Mode != "create" && body.PreviewHash == "" {
 		fail(w, 400, errors.New("inspect the import/adoption and confirm its preview first"))
+		return
+	}
+	if body.Mode != "create" {
+		if err := files.ValidatePath(body.ServerRoot); err != nil {
+			fail(w, 400, errors.New("confirm the exact server_root reported by source inspection"))
+			return
+		}
+	} else if body.ServerRoot != "" || body.ReservationID != "" {
+		fail(w, 400, errors.New("source roots and adoption reservations do not apply to new Fabric installations"))
+		return
+	}
+	if body.Mode != "adopt" && body.ReservationID != "" {
+		fail(w, 400, errors.New("reservation_id is only valid for adoption"))
 		return
 	}
 	if body.Jar == "" {
@@ -114,13 +131,119 @@ func (a *App) createInstance(w http.ResponseWriter, r *http.Request) {
 		}
 		body.Jar = "fabric-server-launch.jar"
 	}
-	if err := files.ValidatePath(body.Jar); err != nil || body.Jar == "." || !strings.HasSuffix(body.Jar, ".jar") {
+	if err := files.ValidatePath(body.Jar); err != nil || strings.HasPrefix(body.Jar, "..") || !strings.HasSuffix(body.Jar, ".jar") {
 		fail(w, 400, errors.New("launcher must be a safe relative JAR path"))
 		return
 	}
 	body.Owner = session(r).User.ID
 	id := model.NewID()
+	if body.Mode == "adopt" {
+		id = body.ReservationID
+		if _, err := a.adoptionInstance(r.Context(), body, id); err != nil {
+			fail(w, 400, err)
+			return
+		}
+	}
 	a.enqueue(w, r, id, "instance_create", body)
+}
+
+func validCreationName(name string) bool {
+	return name != "" && strings.TrimSpace(name) == name && strings.IndexFunc(name, unicode.IsControl) < 0 && len(name) <= 100
+}
+
+type adoptionReservation struct {
+	Owner       string          `json:"owner"`
+	Path        string          `json:"path"`
+	PreviewHash string          `json:"preview_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+	Instance    *model.Instance `json:"instance,omitempty"`
+}
+
+func (a *App) reserveAdoption(ctx context.Context, owner, path, hash, id string) (string, error) {
+	if id != "" {
+		_, err := a.adoptionReservation(ctx, owner, path, hash, id)
+		return id, err
+	}
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var key string
+	err = tx.QueryRowContext(ctx, "SELECT key FROM settings WHERE key LIKE 'adoption-reservation:%' AND json_extract(value,'$.owner')=? AND json_extract(value,'$.path')=? AND json_extract(value,'$.preview_hash')=? ORDER BY key LIMIT 1", owner, path, hash).Scan(&key)
+	if err == nil {
+		return strings.TrimPrefix(key, "adoption-reservation:"), nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	id = model.NewID()
+	raw, err := json.Marshal(adoptionReservation{Owner: owner, Path: path, PreviewHash: hash, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO settings(key,value) VALUES(?,?)", "adoption-reservation:"+id, string(raw)); err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
+}
+
+func (a *App) adoptionReservation(ctx context.Context, owner, path, hash, id string) (adoptionReservation, error) {
+	var reservation adoptionReservation
+	if !model.ValidID(id) {
+		return reservation, errors.New("inspect the adoption source to obtain a valid reservation_id")
+	}
+	if err := a.setting(ctx, "adoption-reservation:"+id, &reservation); err != nil {
+		return reservation, err
+	}
+	if reservation.Owner != owner || reservation.Path != path || reservation.PreviewHash != hash || reservation.CreatedAt.IsZero() {
+		return adoptionReservation{}, errors.New("adoption reservation is missing, belongs to another owner/path, or its preview changed; inspect the source again")
+	}
+	return reservation, nil
+}
+
+func creationInstance(body createRequest, id string, createdAt time.Time) model.Instance {
+	return model.Instance{ID: id, Name: body.Name, Root: body.Path, JavaPath: body.JavaPath, Jar: body.Jar, MinecraftVersion: body.MinecraftVersion, LoaderVersion: body.LoaderVersion, MemoryMB: body.MemoryMB, Port: body.Port, RCONPort: body.RCONPort, EULA: body.EULA, Adopted: body.Mode == "adopt", CreatedAt: createdAt}
+}
+
+func (a *App) adoptionInstance(ctx context.Context, body createRequest, id string) (model.Instance, error) {
+	reservation, err := a.adoptionReservation(ctx, body.Owner, body.Path, body.PreviewHash, id)
+	if err != nil {
+		return model.Instance{}, err
+	}
+	if body.ServerRoot != "." || !filepath.IsAbs(body.Path) || filepath.Clean(body.Path) != body.Path {
+		return model.Instance{}, errors.New("adoption requires the inspected absolute server directory and server_root '.'")
+	}
+	i := creationInstance(body, id, reservation.CreatedAt)
+	if reservation.Instance != nil && etagJSON(*reservation.Instance) != etagJSON(i) {
+		return model.Instance{}, errors.New("adoption registration details are fixed after provisioning is attempted; retry with the original name, runtime, launcher, memory, and ports")
+	}
+	return i, nil
+}
+
+func (a *App) bindAdoption(ctx context.Context, body createRequest, i model.Instance) error {
+	reservation, err := a.adoptionReservation(ctx, body.Owner, body.Path, body.PreviewHash, i.ID)
+	if err != nil {
+		return err
+	}
+	if reservation.Instance != nil && etagJSON(*reservation.Instance) != etagJSON(i) {
+		return errors.New("adoption registration changed; retry the original reserved configuration")
+	}
+	reservation.Instance = &i
+	return a.saveSetting(ctx, "adoption-reservation:"+i.ID, reservation)
+}
+
+func validateSourceChoice(body createRequest, preview importPreview, java fabric.JavaInstallation) error {
+	if preview.PreviewHash != body.PreviewHash || preview.ServerRoot != body.ServerRoot {
+		return errors.New("source preview or server root changed; inspect it again")
+	}
+	if len(preview.Launchers) != 1 || body.Jar != preview.Launchers[0] || body.MinecraftVersion != preview.MinecraftVersion || body.LoaderVersion != preview.LoaderVersion {
+		return errors.New("launcher and Minecraft/Fabric versions must match the inspected source; importing or adopting does not migrate a runtime")
+	}
+	if java.Major < preview.JavaRequired {
+		return fmt.Errorf("source runtime requires Java %d or newer", preview.JavaRequired)
+	}
+	return nil
 }
 
 func (a *App) provision(ctx context.Context, i model.Instance, reconfigure bool) error {
@@ -208,10 +331,29 @@ func (a *App) registerInstanceJobs() {
 		if err := json.Unmarshal(raw, &body); err != nil {
 			return nil, err
 		}
-		i := model.Instance{ID: t.Job.InstanceID, Name: body.Name, JavaPath: body.JavaPath, Jar: body.Jar, MinecraftVersion: body.MinecraftVersion, LoaderVersion: body.LoaderVersion, MemoryMB: body.MemoryMB, Port: body.Port, RCONPort: body.RCONPort, EULA: body.EULA, Adopted: body.Mode == "adopt", CreatedAt: time.Now().UTC(), RCONSecret: auth.Token()}
+		if !validCreationName(body.Name) || files.ValidatePath(body.Jar) != nil || strings.HasPrefix(body.Jar, "..") || !strings.HasSuffix(body.Jar, ".jar") {
+			return nil, errors.New("invalid instance name or launcher; no provisioning was attempted")
+		}
+		i := creationInstance(body, t.Job.InstanceID, time.Now().UTC())
 		i.Root = filepath.Join(a.Config.InstanceDir, i.ID)
 		if i.Adopted {
-			i.Root = filepath.Clean(body.Path)
+			var err error
+			i, err = a.adoptionInstance(ctx, body, t.Job.InstanceID)
+			if err != nil {
+				return nil, err
+			}
+			existing, err := a.Instances.Get(ctx, i.ID)
+			if err == nil {
+				if etagJSON(existing) != etagJSON(i) {
+					return nil, errors.New("reserved instance was already registered differently")
+				}
+				return map[string]any{"instance": existing, "state": "registered"}, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		} else {
+			i.RCONSecret = auth.Token()
 		}
 		if err := t.Progress(ctx, 2, "Checking Java, ports, directory collisions, and the approved preview"); err != nil {
 			return nil, err
@@ -258,9 +400,6 @@ func (a *App) registerInstanceJobs() {
 			if err != nil {
 				return nil, err
 			}
-			if p.Hash != body.PreviewHash {
-				return nil, errors.New("import preview changed; inspect the upload again")
-			}
 			stagingParent, err := os.OpenRoot(filepath.Join(a.Config.DataDir, "staging"))
 			if err != nil {
 				return nil, err
@@ -289,6 +428,20 @@ func (a *App) registerInstanceJobs() {
 			if extracted.Hash != p.Hash {
 				return nil, errors.New("upload changed while extracting")
 			}
+			preview, err := a.instanceSourcePreview(ctx, stageRoot, p.Entries, p.Hash)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateSourceChoice(body, preview, java); err != nil {
+				return nil, err
+			}
+			if preview.ServerRoot != "." {
+				stageRoot, err = stageRoot.OpenRoot(preview.ServerRoot)
+				if err != nil {
+					return nil, err
+				}
+				defer stageRoot.Close()
+			}
 			launcher, openErr := files.OpenRegular(stageRoot, i.Jar)
 			if openErr != nil {
 				return nil, errors.New("selected launcher is missing or unsafe")
@@ -315,8 +468,12 @@ func (a *App) registerInstanceJobs() {
 			if err != nil {
 				return nil, err
 			}
-			if manifestHash(m) != body.PreviewHash {
-				return nil, errors.New("adoption preview changed; stop the existing server and inspect again")
+			preview, err := a.instanceSourcePreview(ctx, root, m.Entries, manifestHash(m))
+			if err != nil {
+				return nil, err
+			}
+			if err := validateSourceChoice(body, preview, java); err != nil {
+				return nil, err
 			}
 			propsRaw, err := files.ReadText(ctx, root, "server.properties", 1<<20)
 			if err != nil {
@@ -326,7 +483,7 @@ func (a *App) registerInstanceJobs() {
 			if err != nil {
 				return nil, err
 			}
-			if props["enable-rcon"] != "true" || props["server-port"] != strconv.Itoa(i.Port) || props["rcon.port"] != strconv.Itoa(i.RCONPort) || len(props["rcon.password"]) < 16 {
+			if props["enable-rcon"] != "true" || props["server-port"] != strconv.Itoa(i.Port) || props["rcon.port"] != strconv.Itoa(i.RCONPort) || fabric.ValidateProperty("rcon.password", props["rcon.password"]) != nil {
 				return nil, errors.New("non-destructive adoption requires matching configured game/RCON ports and an enabled strong RCON credential; no original files were changed")
 			}
 			i.RCONSecret = props["rcon.password"]
@@ -343,12 +500,20 @@ func (a *App) registerInstanceJobs() {
 				return nil, errors.New("selected adopted launcher is missing or unsafe")
 			}
 			launcher.Close()
+			if err := a.Instances.Validate(i); err != nil {
+				return nil, err
+			}
 		}
 		if err := t.Progress(ctx, 65, "Staging verified; provisioning the restricted instance service"); err != nil {
 			return nil, err
 		}
 		if err := t.CommitBarrier(ctx); err != nil {
 			return nil, err
+		}
+		if i.Adopted {
+			if err := a.bindAdoption(ctx, body, i); err != nil {
+				return nil, err
+			}
 		}
 		if err := a.provision(ctx, i, false); err != nil {
 			return nil, err
