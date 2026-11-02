@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowUp, Download, FileText, Folder, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { API, canAdmin, downloadURL, formatBytes, instancePath, request, useAPI, useOperation, validRelativePath, type FileEntry, type ImportPreview, type Instance, type RestorePreview, type User } from '../api'
 import { Button, DataTable, DateText, Empty, ErrorNotice, Field, JsonDetails, Notice, OperationFeedback, PageHeading, QueryState, ReadOnly, Section, SubmitForm, useConfirm } from '../components'
@@ -8,7 +8,7 @@ export function ImportReport({ report }: { report: ImportPreview | RestorePrevie
   return <><p className="lead">{report.file_count.toLocaleString()} files · {formatBytes(report.total_bytes)}</p>{report.warnings.length > 0 && <Notice tone="warning"><ul>{report.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></Notice>}{'conflicts' in report && report.conflicts && report.conflicts.length > 0 && <Notice tone="warning"><strong>Existing paths will be affected</strong><ul>{report.conflicts.slice(0, 30).map(path => <li key={path}><code>{path}</code></li>)}</ul></Notice>}<DataTable label="Inspected archive files" rows={report.files.slice(0, 100)} rowKey={entry => entry.path} columns={[{ header: 'Relative path', render: entry => <code>{entry.path}</code> }, { header: 'Size', render: entry => formatBytes(entry.size) }]} />{report.files.length > 100 && <p className="muted">Showing the first 100 files of {report.files.length.toLocaleString()}. The server inspects the complete archive.</p>}{'preview_hash' in report && <JsonDetails value={{ preview_hash: report.preview_hash, launchers: report.launchers, worlds: report.worlds }} label="Inspection identity and detected content" />}</>
 }
 
-export function Files({ instance, user }: { instance: Instance; user: User }) {
+export function Files({ instance, user, leaveGuard }: { instance: Instance; user: User; leaveGuard?: RefObject<(() => Promise<boolean>) | undefined> }) {
   const [path, setPath] = useState('.')
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<FileEntry>()
@@ -28,8 +28,20 @@ export function Files({ instance, user }: { instance: Instance; user: User }) {
   const allowed = canAdmin(user)
   const recovery = useAPI<{ token: string; path: string; created_at: number }[]>(instancePath(instance.id, '/recovery'), { enabled: allowed && showRecovery })
   const confirm = useConfirm()
-  const dirty = editor && editor.content !== content
-  async function leaveEditor() { return !dirty || queuedEdit || await confirm({ title: 'Discard unsaved text?', body: <p>Your local draft has not been applied to the server.</p>, action: 'Discard draft', danger: true }) }
+  const dirty = !!editor && editor.content !== content
+  const leaveEditor = useCallback(async () => {
+    if (!dirty || queuedEdit) return true
+    if (!await confirm({ title: 'Discard unsaved text?', body: <p>Your local draft has not been applied to the server.</p>, action: 'Discard draft', danger: true })) return false
+    setContent(editor!.content)
+    return true
+  }, [dirty, queuedEdit, confirm, editor])
+  useEffect(() => {
+    if (!dirty || queuedEdit) return
+    if (leaveGuard) leaveGuard.current = leaveEditor
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => { if (leaveGuard) leaveGuard.current = undefined; window.removeEventListener('beforeunload', beforeUnload) }
+  }, [dirty, queuedEdit, leaveEditor, leaveGuard])
   async function openDirectory(destination: string) { if (await leaveEditor()) { previewRequest.current?.abort(); setPreviewBusy(false); setPath(destination); setSelected(undefined); setEditor(undefined); setFilter('') } }
   async function inspect(entry: FileEntry) {
     if (!await leaveEditor()) return

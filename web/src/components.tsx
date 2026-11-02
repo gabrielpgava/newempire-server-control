@@ -14,8 +14,8 @@ export function Field({ label, hint, children, className = '' }: { label: string
 export function CheckField({ children, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { children: ReactNode }) {
   return <label className="check-field"><input type="checkbox" {...props} /><span>{children}</span></label>
 }
-export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  return <div className="notice notice-error" role="alert"><AlertTriangle size={19} aria-hidden="true" /><div><strong>Could not complete the request</strong><p>{errorMessage(error)}</p>{retry && <Button onClick={retry}><RefreshCw size={14} />Try again</Button>}</div></div>
+export function ErrorNotice({ error, retry, stale = false }: { error: unknown; retry?: () => void; stale?: boolean }) {
+  return <div className="notice notice-error" role="alert"><AlertTriangle size={19} aria-hidden="true" /><div><strong>{stale ? 'Could not refresh data' : 'Could not complete the request'}</strong><p>{errorMessage(error)}</p>{stale && <p>Showing previously loaded data; it may be out of date.</p>}{retry && <Button onClick={retry}><RefreshCw size={14} />Try again</Button>}</div></div>
 }
 export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warning' | 'success' }) {
   return <div className={`notice notice-${tone}`} role="status">{tone === 'success' ? <CheckCircle2 size={19} aria-hidden="true" /> : <AlertTriangle size={19} aria-hidden="true" />}<div>{children}</div></div>
@@ -28,9 +28,8 @@ export function Loading({ label = 'Loading current data…' }: { label?: string 
 }
 export function QueryState<T>({ query, children, empty }: { query: UseQueryResult<T, Error>; children: (data: T) => ReactNode; empty?: ReactNode }) {
   if (query.isPending) return <Loading />
-  if (query.isError) return <ErrorNotice error={query.error} retry={() => { void query.refetch() }} />
-  if (query.data === undefined || query.data === null || (Array.isArray(query.data) && query.data.length === 0)) return empty ?? <Empty title="Nothing to show yet">New records will appear here when available.</Empty>
-  return <>{children(query.data)}</>
+  if (query.isError && (query.data === undefined || (query.error instanceof APIError && query.error.status === 401))) return <ErrorNotice error={query.error} retry={() => { void query.refetch() }} />
+  return <>{query.isError && <ErrorNotice error={query.error} stale retry={() => { void query.refetch() }} />}{query.data === undefined || query.data === null || (Array.isArray(query.data) && query.data.length === 0) ? empty ?? <Empty title="Nothing to show yet">New records will appear here when available.</Empty> : children(query.data)}</>
 }
 export function PageHeading({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return <header className="page-heading"><div><h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</header>
@@ -79,11 +78,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<(Confirmation & { resolve: (value: boolean) => void }) | null>(null)
   const [typed, setTyped] = useState('')
   const dialog = useRef<HTMLDialogElement>(null)
+  const returnFocus = useRef<HTMLElement | null>(null)
   const heading = useId()
   const description = useId()
-  useEffect(() => { if (request) { setTyped(''); dialog.current?.showModal() } else dialog.current?.close() }, [request])
+  useEffect(() => { if (request) { setTyped(''); dialog.current?.showModal() } else { dialog.current?.close(); returnFocus.current?.focus() } }, [request])
   function close(value: boolean) { request?.resolve(value); setRequest(null) }
-  return <ConfirmContext value={options => new Promise(resolve => { setRequest({ ...options, resolve }) })}>{children}<dialog ref={dialog} className="confirm-dialog" aria-labelledby={heading} aria-describedby={description} onCancel={event => { event.preventDefault(); close(false) }}>
+  return <ConfirmContext value={options => new Promise(resolve => { returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setRequest({ ...options, resolve }) })}>{children}<dialog ref={dialog} className="confirm-dialog" aria-labelledby={heading} aria-describedby={description} onCancel={event => { event.preventDefault(); close(false) }}>
     {request && <><div className="dialog-heading"><h2 id={heading}>{request.title}</h2><Button variant="ghost" aria-label="Cancel" onClick={() => close(false)}><X size={20} /></Button></div><div id={description} className="dialog-body">{request.body}</div>{request.verify && <Field label={`Type “${request.verify}” to confirm`}><input autoComplete="off" value={typed} onChange={event => setTyped(event.target.value)} /></Field>}<div className="dialog-actions"><Button autoFocus onClick={() => close(false)}>Cancel</Button><Button variant={request.danger ? 'danger' : 'primary'} disabled={!!request.verify && typed !== request.verify} onClick={() => close(true)}>{request.action}</Button></div></>}
   </dialog></ConfirmContext>
 }
