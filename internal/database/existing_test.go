@@ -272,26 +272,28 @@ func TestExistingFileBoundsAndOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign := existingForeignInfo{FileInfo: info, stat: *info.Sys().(*syscall.Stat_t)}
+	foreign := existingFileInfo{FileInfo: info, stat: *info.Sys().(*syscall.Stat_t), size: info.Size()}
 	foreign.stat.Uid++
 	if existingRegular(foreign, 100) {
 		t.Fatal("accepted another account's file")
 	}
-	if err := os.Truncate(path, maxExistingFileSize+1); err != nil {
-		t.Fatal(err)
-	}
-	if s, err := OpenExisting(path); err == nil {
-		s.Close()
-		t.Fatal("accepted oversized database")
+	// Exercise the production limit without exceeding the sandbox's file-size limit.
+	for _, size := range []int64{-1, 99, 100, maxExistingFileSize, maxExistingFileSize + 1} {
+		bounded := existingFileInfo{FileInfo: info, stat: *info.Sys().(*syscall.Stat_t), size: size}
+		if got, want := existingRegular(bounded, 100), size >= 100 && size <= maxExistingFileSize; got != want {
+			t.Errorf("existingRegular size %d = %v; want %v", size, got, want)
+		}
 	}
 }
 
-type existingForeignInfo struct {
+type existingFileInfo struct {
 	os.FileInfo
 	stat syscall.Stat_t
+	size int64
 }
 
-func (i existingForeignInfo) Sys() any { return &i.stat }
+func (i existingFileInfo) Sys() any    { return &i.stat }
+func (i existingFileInfo) Size() int64 { return i.size }
 
 func existingWALFixture(t *testing.T, version int) string {
 	t.Helper()

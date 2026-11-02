@@ -74,7 +74,8 @@ func unprivilegedRecoveryTest(t *testing.T) bool {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(name, "-test.v", "-test.run=^"+regexp.QuoteMeta(t.Name())+"$")
-	cmd.Env = append(os.Environ(), "TMPDIR="+tmp)
+	// Go's testing.TempDir prefers GOTMPDIR; both roots must belong to the child account.
+	cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "GOTMPDIR="+tmp)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
 	b, err := cmd.CombinedOutput()
 	if err != nil {

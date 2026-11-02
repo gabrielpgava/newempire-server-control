@@ -80,11 +80,11 @@ class ReleaseVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary) / "updates"
             path.mkdir(mode=0o700)
-            with installer.directory(str(path)):
+            with installer.directory(str(path), mode=0o700):
                 pass
             os.chown(path, 1000, 1000)
             with self.assertRaisesRegex(ValueError, "unsafe ownership"):
-                with installer.directory(str(path)):
+                with installer.directory(str(path), mode=0o700):
                     self.fail("panel-owned updater state was accepted")
 
     def test_pinned_key_files_and_fingerprint(self):
