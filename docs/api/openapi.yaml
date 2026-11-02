@@ -6,9 +6,11 @@ info:
   summary: Authenticated management of isolated Minecraft Java/Fabric instances.
   description: |
     Source-available under PolyForm Shield 1.0.0. This reference describes the
-    integration contract; an unreleased schema is not a published-version claim.
+    current application integration; an unreleased schema is not a
+    published-version or live-deployment acceptance claim.
 
-    JSON uses snake_case. Lists are arrays, including empty lists. Timestamps are
+    JSON uses snake_case. Application lists are arrays, including empty lists;
+    optional upstream discovery arrays may be null as specified. Timestamps are
     Unix seconds unless a field explicitly uses date-time. JSON requests reject
     unknown fields and must contain exactly one object with Content-Type
     application/json. Ordinary JSON errors are {error: string}. tus protocol and
@@ -183,8 +185,12 @@ paths:
       summary: Generate a TOTP secret or confirm enrollment for the current user
       description: |
         Send {} to generate a secret. Send password, that secret, and a valid
-        code to enable TOTP. Successful enrollment revokes existing sessions;
-        sign in again. There is no disable/reset endpoint in this contract.
+        code to enable TOTP for this account only. Successful enrollment revokes
+        all of this user's sessions, including the current session; sign in
+        again. An existing enrollment cannot be replaced without first disabling
+        it using the password and a valid current code. All account-security
+        routes share a per-user limit of ten requests per 15-minute window,
+        including secret generation; throttling state is process-local.
       x-minimum-role: viewer
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -206,6 +212,59 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    delete:
+      operationId: disableTOTP
+      tags: [Authentication]
+      summary: Disable the current user's TOTP with password and code
+      description: |
+        Self-service for every role. Requires the current password and a valid
+        code from the existing authenticator; no target user or administrator
+        override is accepted. Success revokes all of this user's sessions,
+        including the current session. Sign in again. Shares the account-security
+        request limit with enrollment and password changes.
+      x-minimum-role: viewer
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPDisableRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /api/v1/auth/password:
+    post:
+      operationId: changePassword
+      tags: [Authentication]
+      summary: Change the current user's password and revoke all their sessions
+      description: |
+        Self-service for every role, not a reset of another user's password.
+        Requires current_password and a new_password of 12–1024 UTF-8 bytes
+        (not characters). Success revokes all of this user's sessions, including
+        the current session. Sign in again with the new password and the existing
+        TOTP code if enabled. Shares the account-security request limit with
+        TOTP enrollment and disablement.
+      x-minimum-role: viewer
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasswordChangeRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /api/v1/health:
     get:
       operationId: getHealth
@@ -226,9 +285,11 @@ paths:
       tags: [Automation]
       summary: Subscribe to periodic server-sent invalidations
       description: |
-        Emits event: change with Unix-second data approximately every three
-        seconds. Refetch authorized state; no event replay, durable delivery,
-        Last-Event-ID support, or operation-completion guarantee is implied.
+        Checks a process-local revision approximately every three seconds. Emits
+        event: invalidate with that revision initially and when it changes;
+        otherwise sends a heartbeat comment. Data is not a timestamp. Refetch
+        authorized state; no event replay, durable delivery, Last-Event-ID
+        support, or operation-completion guarantee is implied.
       x-minimum-role: viewer
       responses:
         '200':
@@ -238,7 +299,7 @@ paths:
           content:
             text/event-stream:
               schema: {type: string}
-              example: "event: change\ndata: 1793577600\n\n"
+              example: "event: invalidate\ndata: 42\n\n"
         '401': {$ref: '#/components/responses/Unauthorized'}
   /api/v1/instances:
     get:
@@ -793,6 +854,11 @@ paths:
       operationId: listBackups
       tags: [Backups]
       summary: List the permitted instance's backup catalog
+      description: |
+        Combines local catalog records with trusted saved offsite records.
+        local false means the archive must be fetched before local verification,
+        preview, download, or restore. verified records creation-time integrity;
+        neither it nor offsite metadata rechecks local or remote bytes on listing.
       x-minimum-role: viewer
       responses:
         '200':
@@ -807,7 +873,14 @@ paths:
       operationId: createBackup
       tags: [Backups]
       summary: Queue an offline or explicitly coordinated-online backup
-      description: Offline is the default. online true requires the implemented runtime coordination; never copies a running tree as if it were automatically consistent.
+      description: |
+        Offline is the default: stops a running instance, confirms shutdown, and
+        attempts to restart it afterward. online true requires a ready runtime
+        with authenticated RCON; issues save-off and save-all flush, then attempts
+        save-on even after failure/cancellation. This is Minecraft save
+        coordination, not a transactional snapshot of every mod's private data.
+        The job also replicates the completed backup when offsite storage is
+        enabled; offsite failure leaves the verified local backup available.
       x-minimum-role: operator
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -833,6 +906,12 @@ paths:
       operationId: downloadBackup
       tags: [Backups]
       summary: Download an authenticated backup with HTTP byte-range support
+      description: |
+        Administrator-only because archives can contain RCON credentials and
+        private instance data. Requires a local archive; fetch an offsite-only
+        record first. Opening checks the catalog and file size, not a fresh
+        full-content verification. The download contains the archive, not the
+        separate catalog or portable instance metadata sidecars.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Range'}
@@ -859,6 +938,12 @@ paths:
       operationId: previewRestore
       tags: [Backups]
       summary: Inspect backup contents before deciding to restore
+      description: |
+        Fully verifies the local archive and validates the separate
+        BACKUP_ID.instance.json before returning paths. Missing/malformed
+        metadata, a different instance ID/root/ports/adoption mode, or unsafe
+        Java/launcher/memory/configuration fails with 400. Preview never stops
+        Minecraft or replaces data. Fetch offsite-only archives first.
       x-minimum-role: admin
       responses:
         '200':
@@ -879,7 +964,36 @@ paths:
       operationId: verifyBackup
       tags: [Backups]
       summary: Queue archive and integrity-manifest verification
+      description: Requires a local archive. Verifies archive bytes and manifest, not portable instance metadata; restore preview performs that additional preflight.
       x-minimum-role: operator
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/backups/{backupID}/fetch-offsite:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+      - {$ref: '#/components/parameters/BackupID'}
+    post:
+      operationId: fetchOffsiteBackup
+      tags: [Backups]
+      summary: Queue a trusted offsite archive download for later local use
+      description: |
+        Requires a saved restoration record matching this instance, backup ID,
+        trusted SHA-256, and size; does not discover arbitrary bucket objects or
+        trust a digest from remote metadata alone. Downloads without overwriting
+        an existing local archive, checks every byte against the trusted record,
+        recreates local catalog/instance sidecars, and verifies the archive and
+        manifest. Does not stop Minecraft or restore files. Preview and explicit
+        administrator confirmation remain separate. Request body is not used.
+      x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
         - {$ref: '#/components/parameters/CSRF'}
@@ -900,9 +1014,20 @@ paths:
       tags: [Backups]
       summary: Queue an explicitly confirmed restore after preview
       description: |
-        Admin decision separate from content/runtime rollback. The job must
-        verify the archive, create the required pre-restore recovery point,
-        gracefully stop the runtime, and apply only under the instance lock.
+        Admin decision separate from content/runtime rollback. A 202 only queues
+        the job. Before stopping Minecraft or replacing data, it fully verifies
+        the archive and requires valid BACKUP_ID.instance.json with matching
+        instance ID, root, game/RCON ports, adoption mode, and allowlisted safe
+        configuration. Missing, malformed, foreign, or unsafe metadata fails the
+        job without stopping or changing the instance.
+
+        After preflight it checks space, stops Minecraft if necessary, creates a
+        verified pre-restore backup, validates same-filesystem staging, and swaps
+        data under the instance lock and commit barrier, retaining the original.
+        Archived Java path, launcher JAR, or memory changes trigger restricted
+        service-helper reconfiguration before the instance record is updated.
+        Minecraft remains stopped for review. Inspect result.restore even on
+        failure; a post-swap helper/database error does not undo restored worlds.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -1046,12 +1171,22 @@ paths:
       operationId: searchMods
       tags: [Content]
       summary: Search Modrinth for candidate Fabric server mods
-      description: Search is discovery; only a later compatibility/dependency plan authorizes installation.
+      description: |
+        Requires the exact selected Minecraft version and filters for Fabric
+        server-capable mod projects; the frontend sends the instance's recorded
+        version. Returns at most 20 candidates without a pagination parameter.
+        Search is discovery; only a later compatibility/dependency plan
+        authorizes installation.
       x-minimum-role: admin
       parameters:
         - name: q
           in: query
+          description: Optional search text, limited to 512 UTF-8 bytes.
+          schema: {type: string, maxLength: 512}
+        - name: minecraft_version
+          in: query
           required: true
+          description: Exact selected Minecraft version; not a latest alias.
           schema: {type: string, minLength: 1}
       responses:
         '200':
@@ -1062,7 +1197,7 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
-        '503': {$ref: '#/components/responses/Unavailable'}
+        '502': {$ref: '#/components/responses/BadGateway'}
   /api/v1/instances/{instanceID}/mods:
     parameters:
       - {$ref: '#/components/parameters/InstanceID'}
@@ -1081,7 +1216,7 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '503': {$ref: '#/components/responses/Unavailable'}
+        '502': {$ref: '#/components/responses/BadGateway'}
   /api/v1/instances/{instanceID}/mods/plan:
     parameters:
       - {$ref: '#/components/parameters/InstanceID'}
@@ -1109,7 +1244,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '503': {$ref: '#/components/responses/Unavailable'}
+        '502': {$ref: '#/components/responses/BadGateway'}
   /api/v1/instances/{instanceID}/mods/apply:
     parameters:
       - {$ref: '#/components/parameters/InstanceID'}
@@ -1142,7 +1277,16 @@ paths:
     post:
       operationId: manageMod
       tags: [Content]
-      summary: Queue a managed project's pin, unpin, disable, or remove operation
+      summary: Queue explicit adoption or a managed project's pin, unpin, disable, or remove
+      description: |
+        adopt records management ownership of an installed identified external
+        mod only after official exact-hash and server-compatibility validation;
+        it does not replace JAR bytes. Unknown/unidentified mods cannot be adopted
+        by filename. adopt/pin/unpin/disable require Minecraft already stopped;
+        remove uses the content transaction's shutdown/restart workflow. Required
+        verified backups and instance locks run in the durable job. Other
+        operations reject unmanaged content; dependencies and pins can block
+        removal/disablement. There is no generic enable operation here.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -1160,6 +1304,108 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/modpacks/preview:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: previewModpack
+      tags: [Content]
+      summary: Plan a completed server-only .mrpack upload for this instance
+      description: |
+        The completed, unexpired upload must belong to the current user and have
+        a .mrpack filename. Requires exact Minecraft and Fabric loader versions
+        matching the instance; migrate runtime separately first. Reconstructs
+        indexed mods from official exact hashes/URLs and compatible metadata.
+        Only config/ overrides are supported; existing local configuration wins.
+        Client-only content is skipped, unsafe/unsupported entries are rejected,
+        and unknown projects or missing dependency locks block the plan. Does not
+        apply content, install launchers, or import worlds.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody: {$ref: '#/components/requestBodies/UploadPreview'}
+      responses:
+        '200':
+          description: Reviewed content plan; inspect blocked and warnings.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModPlan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '502': {$ref: '#/components/responses/BadGateway'}
+  /api/v1/instances/{instanceID}/modpacks/apply:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    post:
+      operationId: applyModpack
+      tags: [Content]
+      summary: Queue the exact reviewed server modpack content plan
+      description: |
+        Rechecks upload ownership, completion, runtime compatibility, and the
+        plan hash in the job. Stages verified downloads before shutdown, creates
+        a verified backup, and applies under the instance lock. Uses the same
+        content readiness/recovery workflow as mods/apply; never implicitly
+        restores world data. Does not change Minecraft/Fabric versions.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModpackApplyRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/AcceptedJob'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/instances/{instanceID}/modpacks/export:
+    parameters:
+      - {$ref: '#/components/parameters/InstanceID'}
+    get:
+      operationId: exportModpack
+      tags: [Content]
+      summary: Download a verified reconstruction index as server.mrpack
+      description: |
+        Verifies the installed content lock and JAR bytes; unmanaged, altered,
+        or missing JARs make export fail. Contains exact hashes, original CDN
+        references, and runtime dependencies, not redistributed JAR bytes or
+        world data. This HTTP endpoint does not select/export config overrides,
+        although the domain supports explicitly selected config exports.
+      x-minimum-role: admin
+      parameters:
+        - {$ref: '#/components/parameters/Range'}
+      responses:
+        '200':
+          description: Server-only .mrpack ZIP containing modrinth.index.json.
+          headers:
+            Content-Disposition: {$ref: '#/components/headers/ContentDisposition'}
+          content:
+            application/x-modrinth-modpack+zip:
+              schema: {type: string, format: binary}
+        '206':
+          description: Requested byte range of the .mrpack export.
+          headers:
+            Content-Range: {schema: {type: string}}
+            Accept-Ranges: {schema: {type: string, const: bytes}}
+          content:
+            application/x-modrinth-modpack+zip:
+              schema: {type: string, format: binary}
+            multipart/byteranges:
+              schema: {type: string, format: binary}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '416': {$ref: '#/components/responses/RangeNotSatisfiable'}
         '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/instances/{instanceID}/mods/policy:
     parameters:
@@ -1439,8 +1685,9 @@ paths:
       summary: Create an account with a role and optional instance grants
       description: |
         Owner only. Instance grants are used for operator/viewer; owner/admin
-        already have global instance access. This contract has no account
-        deletion, password reset, or grant-edit endpoint.
+        already have global instance access. This contract has no reset of
+        another user's password or grant-edit endpoint. Self-service security
+        changes use /auth/password and /auth/totp; revocation is separate.
       x-minimum-role: owner
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -1456,6 +1703,28 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/User'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/users/{userID}:
+    parameters:
+      - {$ref: '#/components/parameters/UserID'}
+    delete:
+      operationId: revokeUser
+      tags: [Administration]
+      summary: Revoke a non-owner account and all of its sessions and grants
+      description: |
+        Owner only; cannot revoke the current account or any owner account.
+        Deletes the account, cascading its sessions and instance grants; it is
+        not a temporary suspension, TOTP override, or password reset. Invalid,
+        missing, self, and owner targets return 400. Request body is not used.
+      x-minimum-role: owner
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      responses:
+        '200': {$ref: '#/components/responses/OK'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -1478,13 +1747,15 @@ paths:
     put:
       operationId: saveSettings
       tags: [Administration]
-      summary: Save owner-controlled panel preferences or integration credentials
+      summary: Save backup retention or owner-controlled integration credentials
       description: |
-        Owner only, including nonsecret changes. Credentials are write-only;
-        do not send a redacted GET as if it were replacement configuration.
+        Admin/owner may save backup_retention. Any storage or notifications patch
+        requires owner, including enable-only changes. Credentials are
+        write-only; do not send a redacted GET as replacement configuration.
         public_url, Java paths, and adoption roots are read-only here; change
         them through the protected host configuration and restart the panel.
-      x-minimum-role: owner
+        Supplying public_url is an unknown-field error, not a URL change.
+      x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
         - {$ref: '#/components/parameters/CSRF'}
@@ -1641,6 +1912,11 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/ID'}
+    UserID:
+      name: userID
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ID'}
     JobID:
       name: jobID
       in: path
@@ -1762,7 +2038,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
     TooManyRequests:
-      description: Too many sign-in/setup attempts; wait for the 15-minute attempt window.
+      description: Too many sign-in/setup attempts or shared per-user account-security requests; wait for the 15-minute attempt window.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
@@ -1889,7 +2165,11 @@ components:
       type: string
       writeOnly: true
       format: password
-      description: Creation/setup requires 12–1024 bytes. Never accepted as a URL/query/CLI argument or returned in a response.
+      description: |
+        Creation/setup/self-service changes require 12–1024 UTF-8 bytes, not
+        characters. JSON Schema maxLength counts characters; the server also
+        enforces the byte bounds. Never send in a URL/query or return in a
+        response.
       maxLength: 1024
     Error:
       type: object
@@ -1973,6 +2253,20 @@ components:
       required: [secret]
       properties:
         secret: {type: string, description: Newly generated enrollment secret; do not log or publish. Not an existing saved credential.}
+    TOTPDisableRequest:
+      type: object
+      additionalProperties: false
+      required: [password, code]
+      properties:
+        password: {type: string, format: password, writeOnly: true, maxLength: 1024, description: Current account password.}
+        code: {type: string, pattern: '^[0-9]{6}$', writeOnly: true, description: Code from the currently enrolled authenticator.}
+    PasswordChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: {type: string, format: password, writeOnly: true, maxLength: 1024}
+        new_password: {$ref: '#/components/schemas/Password'}
     CreateUserRequest:
       type: object
       additionalProperties: false
@@ -2236,8 +2530,10 @@ components:
         size: {type: integer, format: int64, minimum: 0}
         sha256: {$ref: '#/components/schemas/SHA256'}
         note: {type: string}
-        verified: {type: boolean, description: 'Recorded integrity verification, not a completed disaster-recovery drill.'}
+        verified: {type: boolean, description: 'Recorded creation-time integrity, not a fresh check of local/remote bytes or a completed disaster-recovery drill.'}
+        local: {type: boolean, description: 'Local catalog presence; false requires fetch-offsite before local use. Older responses may omit it; it is not a fresh archive-byte verification.'}
         offsite:
+          description: Trusted saved replication metadata; uploaded/metadata does not mean remote bytes have been downloaded and verified.
           oneOf:
             - {type: 'null'}
             - {$ref: '#/components/schemas/OffsiteRecord'}
@@ -2275,11 +2571,13 @@ components:
     OffsiteRecord:
       type: object
       additionalProperties: false
-      required: [state, object, backup, updated_at]
+      description: Saved trusted recovery metadata, including nonsecret instance configuration; not proof of current remote byte integrity.
+      required: [state, object, backup, instance, updated_at]
       properties:
         state: {type: string, const: uploaded}
         object: {$ref: '#/components/schemas/StorageObject'}
         backup: {$ref: '#/components/schemas/BackupArchive'}
+        instance: {$ref: '#/components/schemas/Instance'}
         updated_at: {$ref: '#/components/schemas/UnixTime'}
     OffsiteState:
       oneOf:
@@ -2298,6 +2596,13 @@ components:
         backup: {$ref: '#/components/schemas/Backup'}
         local: {type: string, const: verified}
         offsite: {$ref: '#/components/schemas/OffsiteState'}
+    OffsiteFetchResult:
+      type: object
+      additionalProperties: false
+      required: [local, offsite]
+      properties:
+        local: {type: string, const: verified}
+        offsite: {$ref: '#/components/schemas/StorageObject'}
     RestoreTransaction:
       type: object
       additionalProperties: false
@@ -2477,7 +2782,14 @@ components:
         slug: {type: string}
         title: {type: string}
         description: {type: string}
+        project_type: {type: string}
         server_side: {type: string, description: 'Upstream discovery hint, not a compatibility guarantee.'}
+        environment: {type: [array, 'null'], items: {type: string}}
+        categories: {type: [array, 'null'], items: {type: string}}
+    ContentPlanHash:
+      type: string
+      pattern: '^[a-f0-9]{32}$'
+      description: Content-derived 32-hex plan identity; pass unchanged, not a full SHA-256 digest.
     ModPlanRequest:
       type: object
       additionalProperties: false
@@ -2502,7 +2814,7 @@ components:
       additionalProperties: false
       required: [plan_hash, actions, blocked, warnings]
       properties:
-        plan_hash: {$ref: '#/components/schemas/SHA256'}
+        plan_hash: {$ref: '#/components/schemas/ContentPlanHash'}
         actions: {type: array, items: {$ref: '#/components/schemas/ModPlanAction'}}
         blocked: {type: array, items: {type: string}}
         warnings: {type: array, items: {type: string}}
@@ -2512,15 +2824,23 @@ components:
       required: [plan_hash, confirm]
       properties:
         projects: {type: array, items: {type: string, minLength: 1}, description: Use the same project selection as the reviewed plan.}
-        plan_hash: {$ref: '#/components/schemas/SHA256'}
+        plan_hash: {$ref: '#/components/schemas/ContentPlanHash'}
         confirm: {type: boolean, const: true}
     ModManageRequest:
       type: object
       additionalProperties: false
       required: [operation, project_id, confirm]
       properties:
-        operation: {type: string, enum: [pin, unpin, disable, remove]}
-        project_id: {type: string, minLength: 1}
+        operation: {type: string, enum: [pin, unpin, disable, remove, adopt]}
+        project_id: {type: string, minLength: 1, maxLength: 64}
+        confirm: {type: boolean, const: true}
+    ModpackApplyRequest:
+      type: object
+      additionalProperties: false
+      required: [upload_id, plan_hash, confirm]
+      properties:
+        upload_id: {$ref: '#/components/schemas/ID'}
+        plan_hash: {$ref: '#/components/schemas/ContentPlanHash'}
         confirm: {type: boolean, const: true}
     WindowTime:
       type: string
@@ -2571,10 +2891,11 @@ components:
     RuntimePlan:
       type: object
       additionalProperties: false
-      required: [plan_hash, warnings, java_required, changes]
+      required: [plan_hash, warnings, blocked, java_required, changes]
       properties:
         plan_hash: {$ref: '#/components/schemas/SHA256'}
         warnings: {type: array, items: {type: string}}
+        blocked: {type: array, items: {type: string}}
         java_required: {type: integer, minimum: 1}
         changes: {type: array, items: {type: string}}
     RuntimeApplyRequest:
@@ -2620,6 +2941,7 @@ components:
             - {$ref: '#/components/schemas/InstanceResult'}
             - {$ref: '#/components/schemas/RuntimeStatus'}
             - {$ref: '#/components/schemas/BackupResult'}
+            - {$ref: '#/components/schemas/OffsiteFetchResult'}
             - {$ref: '#/components/schemas/BackupManifest'}
             - {$ref: '#/components/schemas/RestoreResult'}
             - {$ref: '#/components/schemas/RestoreTransaction'}
@@ -2762,19 +3084,20 @@ components:
     Settings:
       type: object
       additionalProperties: false
-      required: [public_url, version, runtime_provider, notifications, storage, backup_retention]
+      required: [public_url, version, runtime_provider, adopt_roots, java_paths, notifications, storage, backup_retention]
       properties:
-        public_url: {type: string, format: uri}
+        public_url: {type: string, format: uri, readOnly: true, description: Immutable through HTTP; managed by protected host configuration.}
         version: {type: string}
         runtime_provider: {type: string, const: systemd}
-        adopt_roots: {type: array, items: {type: string}, description: Administrator/owner only.}
-        java_paths: {type: array, items: {type: string}, description: Administrator/owner only.}
+        adopt_roots: {type: array, items: {type: string}, description: Populated for administrator/owner; empty for other roles.}
+        java_paths: {type: array, items: {type: string}, description: Populated for administrator/owner; empty for other roles.}
         notifications: {$ref: '#/components/schemas/IntegrationSummary'}
         storage: {$ref: '#/components/schemas/IntegrationSummary'}
         backup_retention: {$ref: '#/components/schemas/BackupRetention'}
     SettingsRequest:
       type: object
       additionalProperties: false
+      description: Admin/owner may change retention; storage/notifications patches are owner-only. Host-owned public_url is never a writable field.
       minProperties: 1
       properties:
         notifications: {$ref: '#/components/schemas/NotificationSettings'}
@@ -2828,7 +3151,7 @@ components:
         window_start: {$ref: '#/components/schemas/WindowTime'}
         window_end: {$ref: '#/components/schemas/WindowTime'}
         timezone: {$ref: '#/components/schemas/Timezone'}
-        postpone_until: {$ref: '#/components/schemas/UnixTime', description: Optional bounded deferral of automatic application.}
+        postpone_until: {$ref: '#/components/schemas/UnixTime', description: Optional automatic-application deferral deadline. The postpone action bounds its duration; saving a full policy can supply this timestamp directly.}
     UpdatePostponeRequest:
       type: object
       additionalProperties: false
