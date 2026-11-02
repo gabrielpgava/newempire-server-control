@@ -55,6 +55,47 @@ func TestOfflineBackupRequiresStoppedRuntimeAndLeavesItStopped(t *testing.T) {
 	}
 }
 
+func TestMissingTargetRecoveryKeepsPortableMetadataPreflight(t *testing.T) {
+	h := newHarness(t, nil)
+	id := backupID(t, h)
+	if err := os.Rename(h.instance.Root, h.instance.Root+"-retained"); err != nil {
+		t.Fatal(err)
+	}
+	storage, err := h.app.backupRoot(h.instance.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	if _, err := h.app.BackupInstance(t.Context(), storage, id, h.instance); err == nil {
+		t.Fatal("ordinary restore accepted a missing instance directory")
+	}
+	if _, err := h.app.BackupInstanceForRecovery(t.Context(), storage, id, h.instance); err != nil {
+		t.Fatal("allowlisted missing target could not be recovered", err)
+	}
+	invalid := h.instance
+	invalid.JavaPath = "/unapproved/java"
+	raw, err := json.Marshal(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.WriteFile(id+".instance.json", raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.app.BackupInstanceForRecovery(t.Context(), storage, id, h.instance); err == nil {
+		t.Fatal("missing target recovery bypassed the Java allowlist")
+	}
+	raw, _ = json.Marshal(h.instance)
+	if err := storage.WriteFile(id+".instance.json", raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(h.instance.Root+"-retained", h.instance.Root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.app.BackupInstanceForRecovery(t.Context(), storage, id, h.instance); err == nil {
+		t.Fatal("missing target recovery accepted a link")
+	}
+}
+
 func TestRuntimeRecoveryVerifiesRetainedFilesAndNeverRestoresWorlds(t *testing.T) {
 	h := newHarness(t, nil)
 	launcher := filepath.Join(h.instance.Root, h.instance.Jar)

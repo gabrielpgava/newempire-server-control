@@ -20,6 +20,10 @@ func (a *App) BackupInstance(ctx context.Context, storage *os.Root, id string, c
 	return a.backupInstance(ctx, storage, id, current)
 }
 
+func (a *App) BackupInstanceForRecovery(ctx context.Context, storage *os.Root, id string, current model.Instance) (model.Instance, error) {
+	return a.backupInstanceMetadata(ctx, storage, id, current, true)
+}
+
 func (a *App) RecoveryBackup(ctx context.Context, t *jobs.Task, i model.Instance, note string) (backups.Backup, error) {
 	return a.safetyBackup(ctx, t, i, note)
 }

@@ -138,6 +138,10 @@ func (a *App) previewBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) backupInstance(ctx context.Context, storage *os.Root, id string, current model.Instance) (model.Instance, error) {
+	return a.backupInstanceMetadata(ctx, storage, id, current, false)
+}
+
+func (a *App) backupInstanceMetadata(ctx context.Context, storage *os.Root, id string, current model.Instance, allowMissing bool) (model.Instance, error) {
 	if !model.ValidID(id) {
 		return model.Instance{}, errors.New("invalid backup identifier")
 	}
@@ -152,7 +156,11 @@ func (a *App) backupInstance(ctx context.Context, storage *os.Root, id string, c
 	if restored.ID != current.ID || restored.Root != current.Root || restored.Port != current.Port || restored.RCONPort != current.RCONPort || restored.Adopted != current.Adopted {
 		return model.Instance{}, errors.New("snapshot identity, directory, ports, or ownership mode differs from this instance; no restore was applied")
 	}
-	if err := a.Instances.Validate(restored); err != nil {
+	validate := a.Instances.Validate
+	if allowMissing {
+		validate = a.Instances.ValidateForRecovery
+	}
+	if err := validate(restored); err != nil {
 		return model.Instance{}, fmt.Errorf("snapshot instance configuration failed preflight: %w", err)
 	}
 	restored.RCONSecret = current.RCONSecret
