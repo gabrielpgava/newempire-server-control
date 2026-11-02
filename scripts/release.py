@@ -161,7 +161,7 @@ def plan_release(args):
     # Select the baseline before reading messages; prerelease tags never become it.
     _, base = next_version(tags, [])
     revision = f'{base}..{sha}' if base else sha
-    messages = run('git', 'log', '--format=%B%x00', revision).split('\x00')
+    messages = run('git', 'log', '-z', '--format=%B', revision).split('\x00')
     bump = os.environ.get('RELEASE_BUMP', 'auto')
     channel = os.environ.get('RELEASE_CHANNEL', 'stable')
     result, _ = next_version(tags, messages, bump, channel)

@@ -53,11 +53,18 @@ class Versions(unittest.TestCase):
                 git('tag', 'v1.0.0')
                 git('commit', '--allow-empty', '-m', 'feat: compatible change')
                 git('tag', 'v1.1.0-beta.1')
+                git('commit', '--allow-empty', '-m', 'fix: later repair')
+                git('commit', '--allow-empty', '-m', 'docs: latest clarification')
                 with mock.patch.dict(os.environ, {'RELEASE_BUMP': 'auto', 'RELEASE_CHANNEL': 'stable', 'RELEASE_RETRY_TAG': ''}), contextlib.redirect_stdout(io.StringIO()):
                     release.plan_release(argparse.Namespace(live=False, output='plan.json'))
                 plan = json.loads(pathlib.Path('plan.json').read_text())
                 self.assertEqual(plan['version'], '1.1.0')
                 self.assertNotIn('old break', plan['body'])
+                git('commit', '--allow-empty', '-m', 'feat!: new protocol')
+                git('commit', '--allow-empty', '-m', 'docs: protocol migration guide')
+                with mock.patch.dict(os.environ, {'RELEASE_BUMP': 'auto', 'RELEASE_CHANNEL': 'stable', 'RELEASE_RETRY_TAG': ''}), contextlib.redirect_stdout(io.StringIO()):
+                    release.plan_release(argparse.Namespace(live=False, output='plan.json'))
+                self.assertEqual(json.loads(pathlib.Path('plan.json').read_text())['version'], '2.0.0')
                 git('commit', '--allow-empty', '-m', 'chore: cleanup', '-m', 'BREAKING CHANGE: new format')
                 with mock.patch.dict(os.environ, {'RELEASE_BUMP': 'auto', 'RELEASE_CHANNEL': 'stable', 'RELEASE_RETRY_TAG': ''}), contextlib.redirect_stdout(io.StringIO()):
                     release.plan_release(argparse.Namespace(live=False, output='plan.json'))
