@@ -38,5 +38,5 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 
 ### Verification still required
 
-- Complete integrated checks, Linux/systemd/firewall and real Minecraft acceptance, Proxmox LXC testing, provider delivery tests, and disaster-recovery drills.
+- Protected-branch CI, Linux/systemd/firewall and real Minecraft acceptance, Proxmox LXC testing, provider delivery tests, and disaster-recovery drills. Local host/Linux checks and ephemeral-key package smokes are recorded in the acceptance ledger, not claimed as live deployment proof.
 - Confirm release signing and trusted publication, both native architectures, updater discovery, panel-only restart, and post-update rollback on a real host. See [acceptance](docs/acceptance.md) for the evidence boundary.

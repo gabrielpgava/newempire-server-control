@@ -1,0 +1,56 @@
+{
+  "source_commit": "78ee097bda4e3f00032b254f2591fbb2656f5884",
+  "version": "0.0.0-dev.1",
+  "official_release": false,
+  "signing": "Ephemeral in-memory dry-run key; not the production trust root; no GitHub provenance/publication.",
+  "architectures": [
+    {
+      "architecture": "amd64",
+      "identity": {
+        "commit": "78ee097bda4e3f00032b254f2591fbb2656f5884",
+        "release_repository": "gabrielpgava/newempire-server-control",
+        "schema": 1,
+        "version": "0.0.0-dev.1"
+      },
+      "uid": 65534,
+      "verified_embedded_files": [
+        "assets/index-C7-Wu48d.css",
+        "assets/index-CEOd6GV_.js",
+        "index.html"
+      ],
+      "health": "passed",
+      "protected_state": "passed",
+      "concurrent_diagnostics_refused": true,
+      "shutdown": "passed",
+      "execution": "amd64 ELF under Docker Desktop emulation on arm64 macOS",
+      "runtime": "Unprivileged network-disabled Linux container; no host services; panel PATH excludes Node and runtime tools. Node is only the test client.",
+      "root_http_refused": true,
+      "archive": "new-empire-control_0.0.0-dev.1_linux_amd64.tar.gz",
+      "archive_sha256": "c5aeb2eeca22edc1a0cc348b1e5cd5a49a30fab45091eb55c9339b5e7753d554"
+    },
+    {
+      "architecture": "arm64",
+      "identity": {
+        "commit": "78ee097bda4e3f00032b254f2591fbb2656f5884",
+        "release_repository": "gabrielpgava/newempire-server-control",
+        "schema": 1,
+        "version": "0.0.0-dev.1"
+      },
+      "uid": 65534,
+      "verified_embedded_files": [
+        "assets/index-C7-Wu48d.css",
+        "assets/index-CEOd6GV_.js",
+        "index.html"
+      ],
+      "health": "passed",
+      "protected_state": "passed",
+      "concurrent_diagnostics_refused": true,
+      "shutdown": "passed",
+      "execution": "arm64 ELF in Docker Desktop on arm64 macOS",
+      "runtime": "Unprivileged network-disabled Linux container; no host services; panel PATH excludes Node and runtime tools. Node is only the test client.",
+      "root_http_refused": true,
+      "archive": "new-empire-control_0.0.0-dev.1_linux_arm64.tar.gz",
+      "archive_sha256": "332aa51ee4b92da38563c1d051fd82aeea6c6d56afa187cfb329f6b089564250"
+    }
+  ]
+}
