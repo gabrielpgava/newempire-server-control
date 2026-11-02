@@ -10,5 +10,6 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
+    testTimeout: 30_000,
   },
 })

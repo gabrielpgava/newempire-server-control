@@ -282,6 +282,8 @@ func doctor(c config.Config) error {
 			return err
 		}
 		checks["database"] = "integrity and foreign keys verified"
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	} else {
 		checks["database"] = "not initialized"
 	}

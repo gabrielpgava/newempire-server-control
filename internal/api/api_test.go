@@ -93,6 +93,10 @@ type harness struct {
 	instance model.Instance
 }
 
+var harnessPasswordHash = sync.OnceValues(func() (string, error) {
+	return auth.PasswordHash("controlled-password")
+})
+
 func newHarness(t *testing.T, content *modrinth.Service) *harness {
 	t.Helper()
 	dir := t.TempDir()
@@ -123,7 +127,12 @@ func newHarness(t *testing.T, content *modrinth.Service) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cancel(); a.Wait(); db.Close() })
-	if _, err := a.Auth.CreateUser(ctx, "owner", "controlled-password", "owner", true); err != nil {
+	hash, err := harnessPasswordHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Authentication/bootstrap have dedicated tests; reuse only the fixture hash, never a session.
+	if _, err := db.ExecContext(ctx, "INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)", model.NewID(), "owner", hash, "owner", time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
 	session, err := a.Auth.Login(ctx, "owner", "controlled-password", "")

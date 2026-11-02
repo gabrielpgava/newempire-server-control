@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gabrielpgava/newempire-server-control/internal/config"
+	"github.com/gabrielpgava/newempire-server-control/internal/lock"
 )
 
 func TestDoctorDoesNotInitializeAnEmptyDatabase(t *testing.T) {
@@ -21,5 +22,25 @@ func TestDoctorDoesNotInitializeAnEmptyDatabase(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() != 0 {
 		t.Fatal("doctor initialized or migrated the database", err)
+	}
+}
+
+func TestDoctorRejectsConcurrentPanelAndInvalidDataRoot(t *testing.T) {
+	c := config.Default()
+	c.DataDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(c.DataDir, "panel.db"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := lock.Acquire(filepath.Join(c.DataDir, "panel.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := doctor(c); err == nil {
+		t.Fatal("doctor bypassed the panel process lock")
+	}
+	c.DataDir = filepath.Join(c.DataDir, "panel.db")
+	if err := doctor(c); err == nil {
+		t.Fatal("doctor misreported an invalid data root as uninitialized")
 	}
 }

@@ -50,6 +50,9 @@ separately runs frontend tests/build without network or credentials. Its two
 workers share a two-CPU quota, with a ten-minute watchdog for a cold constrained
 run. Only validated bounded distribution files are copied back; a timeout is a
 failed check, not evidence that the tests passed.
+Frontend interaction tests allow five seconds for an asynchronous assertion and
+thirty seconds for a complete multi-step scenario under that CPU quota. These
+are correctness deadlines, not measured browser performance targets.
 
 Use a new temporary data directory, localhost-only test servers and disposable
 instances for all manual checks. Never use a real world, production panel
