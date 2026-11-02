@@ -22,7 +22,7 @@ export function Auth({ setup }: { setup: boolean }) {
     } catch (cause) { setError(cause) } finally { setBusy(false) }
   }
   return <main className="auth-page"><div className="auth-identity"><div className="brand-mark" aria-hidden="true"><ShieldCheck size={26} /></div><strong>New Empire<span>Server Control</span></strong></div><section className="auth-form"><h1>{setup ? 'Set up your control panel' : 'Welcome back'}</h1><p>{setup ? 'Create the owner account. Your setup token is available on the panel host.' : 'Sign in to manage your Minecraft instances.'}</p>{!!error && <ErrorNotice error={error} />}<SubmitForm onSubmit={submit}>
-    {setup && <Field label="Setup token" hint="Use the one-time token printed by the panel during first startup."><input name="token" autoComplete="off" required autoFocus type="password" /></Field>}
+    {setup && <Field label="Setup token" hint="Read the protected setup-token file in the panel data directory on the host."><input name="token" autoComplete="off" required autoFocus type="password" /></Field>}
     <Field label="Username"><input name="username" autoComplete="username" required minLength={3} maxLength={64} autoFocus={!setup} /></Field>
     <Field label="Password" hint={setup ? 'Use at least 12 characters and a unique password.' : undefined}><input name="password" type="password" autoComplete={setup ? 'new-password' : 'current-password'} required minLength={setup ? 12 : undefined} maxLength={1024} /></Field>
     {setup && <Field label="Confirm password"><input name="password_confirmation" type="password" autoComplete="new-password" required minLength={12} /></Field>}

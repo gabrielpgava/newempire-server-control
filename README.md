@@ -54,7 +54,7 @@ Use the deployment files under `deploy/`; inspect the installation guide and ins
 
 - Run the web process as the dedicated unprivileged panel account. `serve` refuses to run as root.
 - Keep instance roots, backups, upload staging, and file recovery separate. Preserve `panel.db` **and** its matching `master.key` in protected panel recovery backups.
-- Set `public_url` to the exact browser origin. Non-loopback access requires HTTPS; use a reverse proxy and preserve the original `Origin` header.
+- Set `public_url` to the exact browser origin. Non-loopback access requires HTTPS; follow the [reverse-proxy guide](docs/install/reverse-proxy.md) and preserve the original `Origin` header.
 - Never expose RCON publicly. A loopback RCON client alone does not restrict the Minecraft listener; the native helper/firewall must enforce isolation.
 - The Compose deployment hosts the **panel only**. It does not supply a Docker runtime adapter or control host systemd services. Do not mount the Docker socket or give the container unrestricted host privileges as a workaround.
 
