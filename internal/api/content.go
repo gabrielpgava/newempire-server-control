@@ -273,6 +273,17 @@ func contentTransactions(root *os.Root) ([]*modrinth.Transaction, error) {
 	}
 	return all, nil
 }
+
+func contentSettled(root *os.Root) error {
+	transactions, err := contentTransactions(root)
+	if err != nil {
+		return err
+	}
+	if len(transactions) != 0 {
+		return errors.New("a prior content transaction needs readiness verification or explicit recovery before another file or configuration change")
+	}
+	return nil
+}
 func (a *App) pendingContent(ctx context.Context, i model.Instance, rollback bool) error {
 	root, err := a.Instances.OpenRoot(i.Root)
 	if err != nil {
@@ -329,7 +340,14 @@ func (a *App) recoverPreparedContent(ctx context.Context, i model.Instance) erro
 	}
 	return nil
 }
-func (a *App) applyContent(ctx context.Context, t *jobs.Task, i model.Instance, p *modrinth.Plan, stage *os.Root) (any, error) {
+func (a *App) applyContent(ctx context.Context, t *jobs.Task, i model.Instance, p *modrinth.Plan, stage *os.Root) (response any, resultErr error) {
+	defer func() {
+		kind := "content_update_succeeded"
+		if resultErr != nil {
+			kind = "content_update_failed"
+		}
+		a.notify(context.WithoutCancel(ctx), kind, i.ID, t.Job.ID)
+	}()
 	if len(p.Blockers) > 0 {
 		return planWire(p), errors.New("content plan is blocked: " + strings.Join(p.Blockers, "; "))
 	}
@@ -338,12 +356,8 @@ func (a *App) applyContent(ctx context.Context, t *jobs.Task, i model.Instance, 
 		return nil, err
 	}
 	defer root.Close()
-	existing, err := contentTransactions(root)
-	if err != nil {
+	if err := contentSettled(root); err != nil {
 		return nil, err
-	}
-	if len(existing) > 0 {
-		return nil, errors.New("a prior content transaction needs readiness verification or recovery before another change")
 	}
 	status, err := a.runtimeStatus(ctx, i)
 	if err != nil {
@@ -513,6 +527,18 @@ func (a *App) registerContentJobs() {
 		if err := a.saveSetting(ctx, "mods-pending:"+i.ID, len(p.Changes) > 0 && len(p.Blockers) == 0); err != nil {
 			return nil, err
 		}
+		if len(p.Changes) > 0 {
+			var notified string
+			if err := a.setting(ctx, "mods-notified-plan:"+i.ID, &notified); err != nil {
+				return nil, err
+			}
+			if notified != p.ID {
+				a.notify(ctx, "content_updates_available", i.ID, t.Job.ID)
+				if err := a.saveSetting(ctx, "mods-notified-plan:"+i.ID, p.ID); err != nil {
+					return nil, err
+				}
+			}
+		}
 		policy := defaultContentPolicy()
 		if err := a.setting(ctx, "mods-policy:"+i.ID, &policy); err != nil {
 			return nil, err
@@ -526,6 +552,15 @@ func (a *App) registerContentJobs() {
 		}
 		if failedPlan == p.ID {
 			return planWire(p), errors.New("this exact plan previously failed automatic maintenance; administrator review is required")
+		}
+		inventory, err := a.Content.Inventory(ctx, root)
+		if err != nil {
+			return nil, err
+		}
+		for _, file := range inventory.Files {
+			if !file.Managed {
+				return map[string]any{"plan": planWire(p), "postponed": true, "reason": "Automatic-safe maintenance requires every installed mod to be explicitly managed; unidentified and external mods were preserved."}, nil
+			}
 		}
 		inside, err := scheduler.InWindow(time.Now(), policy.Timezone, policy.WindowStart, policy.WindowEnd)
 		if err != nil {
@@ -554,16 +589,14 @@ func (a *App) registerContentJobs() {
 		if err != nil {
 			return nil, err
 		}
-		if !inside || policy.PostponePlayers && len(status.Players) > 0 {
+		if !inside || !status.Ready || policy.PostponePlayers && len(status.Players) > 0 {
 			return planWire(p), errors.New("automatic maintenance postponed after staging because its window or player state changed")
 		}
 		result, applyErr := a.applyContent(ctx, t, i, p, stage)
 		if applyErr != nil {
-			a.saveSetting(ctx, "mods-failed-plan:"+i.ID, p.ID)
-		} else {
-			a.saveSetting(ctx, "mods-pending:"+i.ID, false)
+			return result, errors.Join(applyErr, a.saveSetting(ctx, "mods-failed-plan:"+i.ID, p.ID))
 		}
-		return result, applyErr
+		return result, a.saveSetting(ctx, "mods-pending:"+i.ID, false)
 	})
 	a.Jobs.Register("mod_manage", 0, a.manageContentJob)
 }
@@ -582,12 +615,8 @@ func (a *App) manageContentJob(ctx context.Context, t *jobs.Task, raw json.RawMe
 		return nil, err
 	}
 	defer root.Close()
-	transactions, err := contentTransactions(root)
-	if err != nil {
+	if err := contentSettled(root); err != nil {
 		return nil, err
-	}
-	if len(transactions) > 0 {
-		return nil, errors.New("verify or recover the pending content transaction before changing its policy")
 	}
 	inventory, err := a.Content.Inventory(ctx, root)
 	if err != nil {
@@ -596,8 +625,10 @@ func (a *App) manageContentJob(ctx context.Context, t *jobs.Task, raw json.RawMe
 	var selected *modrinth.LocalFile
 	for n := range inventory.Files {
 		if inventory.Files[n].ProjectID == body.ProjectID {
+			if selected != nil {
+				return nil, errors.New("multiple installed files identify this project; reconcile duplicate mods explicitly before managing it")
+			}
 			selected = &inventory.Files[n]
-			break
 		}
 	}
 	if selected == nil {
@@ -605,6 +636,13 @@ func (a *App) manageContentJob(ctx context.Context, t *jobs.Task, raw json.RawMe
 	}
 	if !selected.Managed && body.Operation != "adopt" {
 		return nil, errors.New("external content is preserved; explicitly adopt its exact hash before managing it")
+	}
+	if body.Operation == "adopt" {
+		for _, file := range inventory.Lock.Files {
+			if file.ProjectID == selected.ProjectID || strings.EqualFold(file.Filename, selected.Filename) {
+				return nil, errors.New("this project or filename is already recorded in the content lock; reconcile its existing entry instead of adopting it twice")
+			}
+		}
 	}
 	if body.Operation == "pin" || body.Operation == "unpin" || body.Operation == "adopt" {
 		if err := a.assertStopped(ctx, i); err != nil {

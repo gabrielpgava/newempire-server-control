@@ -248,6 +248,9 @@ func (a *App) registerFileJobs() {
 			return nil, err
 		}
 		defer root.Close()
+		if err := contentSettled(root); err != nil {
+			return nil, err
+		}
 		if err := t.Progress(ctx, 5, "Checking paths and creating a verified restore point"); err != nil {
 			return nil, err
 		}
@@ -631,6 +634,9 @@ func (a *App) registerImportJobs() {
 			return nil, err
 		}
 		defer root.Close()
+		if err := contentSettled(root); err != nil {
+			return nil, err
+		}
 		p, err := a.inspectUpload(ctx, body.Owner, body.UploadID)
 		if err != nil {
 			return nil, err

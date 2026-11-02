@@ -326,12 +326,8 @@ func (a *App) registerRuntimeJobs() {
 			return nil, err
 		}
 		defer root.Close()
-		transactions, err := contentTransactions(root)
-		if err != nil {
+		if err := contentSettled(root); err != nil {
 			return nil, err
-		}
-		if len(transactions) > 0 {
-			return nil, errors.New("finish or recover the prior content transaction before changing runtimes")
 		}
 		props, err := files.ReadText(ctx, root, "server.properties", 1<<20)
 		if err != nil {

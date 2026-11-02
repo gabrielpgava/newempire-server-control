@@ -328,6 +328,9 @@ func (a *App) registerGameJobs() {
 			return nil, err
 		}
 		defer root.Close()
+		if err := contentSettled(root); err != nil {
+			return nil, err
+		}
 		old, props, err := readProperties(ctx, root)
 		if err != nil {
 			return nil, err
@@ -377,6 +380,9 @@ func (a *App) registerGameJobs() {
 			return nil, err
 		}
 		defer root.Close()
+		if err := contentSettled(root); err != nil {
+			return nil, err
+		}
 		old, _, err := readProperties(ctx, root)
 		if err != nil {
 			return nil, err
@@ -439,6 +445,9 @@ func (a *App) registerGameJobs() {
 				return nil, err
 			}
 			defer root.Close()
+			if err := contentSettled(root); err != nil {
+				return nil, err
+			}
 			records, err := readJSONList(ctx, root, "ops.json")
 			if err != nil {
 				return nil, err

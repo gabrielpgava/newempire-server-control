@@ -388,13 +388,31 @@ func fixtureContent(t *testing.T) *modrinth.Service {
 		case r.URL.Host == "cdn.modrinth.com":
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(jar)), Header: make(http.Header), ContentLength: int64(len(jar)), Request: r}, nil
 		case r.URL.Path == "/v2/version_files" || r.URL.Path == "/v2/version_files/update":
-			payload = map[string]any{}
+			var body struct {
+				Hashes []string `json:"hashes"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			found := map[string]any{}
+			if slices.Contains(body.Hashes, hash) {
+				found[hash] = version
+			}
+			payload = found
 		case r.URL.Path == "/v2/project/project1":
 			payload = map[string]any{"id": "project1", "slug": "fixture", "title": "Controlled fixture mod", "project_type": "mod", "server_side": "required", "environment": []string{"server_only"}, "loaders": []string{"fabric"}}
 		case strings.HasSuffix(r.URL.Path, "/version"):
 			payload = []any{version}
 		case r.URL.Path == "/v2/version/version1":
 			payload = version
+		case r.URL.Path == "/v2/version/version2":
+			next := make(map[string]any, len(version))
+			for key, value := range version {
+				next[key] = value
+			}
+			next["id"], next["version_number"] = "version2", "2.0.0"
+			next["files"] = []any{map[string]any{"filename": "fixture-next.jar", "size": len(jar), "primary": true, "url": "https://cdn.modrinth.com/data/project1/versions/version2/fixture-next.jar", "hashes": map[string]string{"sha512": hash}}}
+			payload = next
 		default:
 			return nil, fmt.Errorf("unexpected fixture upstream request: %s", r.URL.Path)
 		}
