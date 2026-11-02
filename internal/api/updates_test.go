@@ -66,6 +66,71 @@ func automaticPolicy(t *testing.T, a *App) PanelPolicy {
 	return p
 }
 
+func TestUpdatePolicyPreservesPostponementUnlessExplicit(t *testing.T) {
+	h := newHarness(t, nil)
+	deferred := decodeResponse[PanelPolicy](t, h.request(t, "POST", "/updates/postpone", map[string]int{"hours": 24}, &h.session, true), 200)
+	for _, test := range []struct {
+		name string
+		body map[string]any
+		want int64
+	}{
+		{"omitted", map[string]any{}, deferred.PostponeUntil},
+		{"explicit clear", map[string]any{"postpone_until": 0}, 0},
+		{"explicit replacement", map[string]any{"postpone_until": deferred.PostponeUntil + 3600}, deferred.PostponeUntil + 3600},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := h.app.saveSetting(t.Context(), "updates-policy", deferred); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range map[string]any{"mode": "notify", "channel": "stable", "interval_hours": 12, "window_start": "03:00", "window_end": "05:00", "timezone": "UTC"} {
+				test.body[key] = value
+			}
+			saved := decodeResponse[PanelPolicy](t, h.request(t, "PUT", "/updates/policy", test.body, &h.session, true), 200)
+			if saved.PostponeUntil != test.want || saved.IntervalHours != 12 {
+				t.Fatalf("policy edit changed the deadline without an explicit replacement: %+v", saved)
+			}
+			var stored PanelPolicy
+			if err := h.app.setting(t.Context(), "updates-policy", &stored); err != nil || stored != saved {
+				t.Fatal("policy response differs from stored maintenance policy", stored, err)
+			}
+		})
+	}
+	if err := h.app.saveSetting(t.Context(), "updates-policy", deferred); err != nil {
+		t.Fatal(err)
+	}
+	if response := h.request(t, "PUT", "/updates/policy", map[string]string{"mode": "notify"}, &h.session, true); response.Code != 400 {
+		t.Fatal("incomplete policy became valid while preserving the deadline")
+	}
+	var stored PanelPolicy
+	if err := h.app.setting(t.Context(), "updates-policy", &stored); err != nil || stored != deferred {
+		t.Fatal("invalid policy edit changed the saved postponement", stored, err)
+	}
+	for range 8 {
+		if err := h.app.saveSetting(t.Context(), "updates-policy", defaultPanelPolicy()); err != nil {
+			t.Fatal(err)
+		}
+		edit := defaultPanelPolicy()
+		edit.IntervalHours = 12
+		start := make(chan struct{})
+		responses := make(chan *httptest.ResponseRecorder, 2)
+		go func() {
+			<-start
+			responses <- h.request(t, "PUT", "/updates/policy", edit, &h.session, true)
+		}()
+		go func() {
+			<-start
+			responses <- h.request(t, "POST", "/updates/postpone", map[string]int{"hours": 24}, &h.session, true)
+		}()
+		close(start)
+		for range 2 {
+			decodeResponse[PanelPolicy](t, <-responses, 200)
+		}
+		if err := h.app.setting(t.Context(), "updates-policy", &stored); err != nil || stored.IntervalHours != 12 || stored.PostponeUntil <= time.Now().Unix() {
+			t.Fatal("concurrent policy/postponement requests lost a saved field", stored, err)
+		}
+	}
+}
+
 func TestAutomaticUpdateReusesStagedReleaseAndRechecksPolicy(t *testing.T) {
 	for _, change := range []string{"none", "expired window", "disabled", "postponed", "channel changed"} {
 		t.Run(change, func(t *testing.T) {

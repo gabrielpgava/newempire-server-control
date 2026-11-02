@@ -3233,7 +3233,7 @@ components:
         window_start: {$ref: '#/components/schemas/WindowTime'}
         window_end: {$ref: '#/components/schemas/WindowTime'}
         timezone: {$ref: '#/components/schemas/Timezone'}
-        postpone_until: {$ref: '#/components/schemas/UnixTime', description: Optional automatic-application deferral deadline. The postpone action bounds its duration; saving a full policy can supply this timestamp directly.}
+        postpone_until: {$ref: '#/components/schemas/UnixTime', description: Optional automatic-application deferral deadline. Omission preserves the currently saved deadline atomically. An explicit timestamp replaces it; zero clears it. The separate postpone action bounds its duration and preserves other policy fields.}
     UpdatePostponeRequest:
       type: object
       additionalProperties: false

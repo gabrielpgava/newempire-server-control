@@ -9,7 +9,7 @@ export function Updates({ user }: { user: User }) {
   const postpone = useOperation<UpdatePolicy>()
   const confirm = useConfirm()
   const allowed = user.role === 'owner'
-  const postponedUntil = postpone.data?.postpone_until ?? updates.data?.policy.postpone_until
+  const postponedUntil = updates.data?.policy.postpone_until
   async function action(kind: 'check' | 'stage' | 'apply' | 'rollback') {
     if (!allowed) return
     const destructive = kind === 'apply' || kind === 'rollback'

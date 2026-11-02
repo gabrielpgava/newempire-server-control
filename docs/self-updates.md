@@ -90,6 +90,16 @@ finishes an automatic check from a successful intermediate staging report.
 
 ## Check, stage, apply
 
+The default policy is **notify only**, stable channel, a 24-hour check interval,
+and a `02:00`–`04:00 UTC` maintenance window. Only the owner may opt into
+`automatic` mode. In that mode a due or manually requested check can proceed to
+verified staging/application when the policy, window and postponement permit it;
+otherwise it only checks/notifies. Saving ordinary policy fields preserves an
+existing postponement atomically. A direct policy API caller can explicitly
+replace its timestamp or clear it with zero. Explicit manual stage/apply are not
+deferred by the automatic maintenance window or postponement, and manual
+apply/rollback still require confirmation.
+
 1. **Check** reads eligible releases through the official GitHub API, chooses the
    highest newer SemVer, and authenticates its manifest. No newer release returns
    `available: null`; an unsigned latest release is an error, not a silent fallback.

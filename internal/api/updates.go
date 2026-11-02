@@ -108,16 +108,34 @@ func (a *App) updatesStatus(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, out)
 }
 func (a *App) updatePolicy(w http.ResponseWriter, r *http.Request) {
-	var p PanelPolicy
-	if err := decode(r, &p); err != nil {
+	var body struct {
+		PanelPolicy
+		PostponeUntil *int64 `json:"postpone_until"`
+	}
+	if err := decode(r, &body); err != nil {
 		fail(w, 400, err)
 		return
+	}
+	p := body.PanelPolicy
+	if body.PostponeUntil != nil {
+		p.PostponeUntil = *body.PostponeUntil
 	}
 	if err := p.Validate(); err != nil {
 		fail(w, 400, err)
 		return
 	}
-	if err := a.saveSetting(r.Context(), "updates-policy", p); err != nil {
+	raw, err := json.Marshal(p)
+	if err == nil {
+		// Preserve concurrent postponements unless the owner explicitly replaces the deadline.
+		err = a.DB.QueryRowContext(r.Context(), `INSERT INTO settings(key,value) VALUES('updates-policy',?)
+			ON CONFLICT(key) DO UPDATE SET value=CASE WHEN ? THEN excluded.value
+			ELSE json_set(excluded.value,'$.postpone_until',coalesce(json_extract(settings.value,'$.postpone_until'),0)) END
+			RETURNING value`, string(raw), body.PostponeUntil != nil).Scan(&raw)
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, &p)
+	}
+	if err != nil {
 		fail(w, 500, err)
 		return
 	}
@@ -140,12 +158,17 @@ func (a *App) updateAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p := defaultPanelPolicy()
-		if err := a.setting(r.Context(), "updates-policy", &p); err != nil {
-			fail(w, 500, err)
-			return
-		}
 		p.PostponeUntil = time.Now().Add(time.Duration(body.Hours) * time.Hour).Unix()
-		if err := a.saveSetting(r.Context(), "updates-policy", p); err != nil {
+		raw, err := json.Marshal(p)
+		if err == nil {
+			err = a.DB.QueryRowContext(r.Context(), `INSERT INTO settings(key,value) VALUES('updates-policy',?)
+				ON CONFLICT(key) DO UPDATE SET value=json_set(settings.value,'$.postpone_until',?)
+				RETURNING value`, string(raw), p.PostponeUntil).Scan(&raw)
+		}
+		if err == nil {
+			err = json.Unmarshal(raw, &p)
+		}
+		if err != nil {
 			fail(w, 500, err)
 			return
 		}

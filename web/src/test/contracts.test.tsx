@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { formatDate, type Backup, type Mod, type UpdateState, type User } from '../api'
@@ -72,7 +72,8 @@ describe('panel update request and permission contracts', () => {
   it('postpones by exactly 24 hours and shows the returned deadline without inventing one', async () => {
     let body: unknown
     const until = 1_793_664_000
-    mockAPI((path, init) => { if (path === '/updates/postpone') { body = JSON.parse(String(init.body)); return { ...updateState.policy, postpone_until: until } }; return updateState })
+    let savedPolicy = updateState.policy
+    mockAPI((path, init) => { if (path === '/updates/postpone') { body = JSON.parse(String(init.body)); savedPolicy = { ...savedPolicy, postpone_until: until }; return savedPolicy }; return { ...updateState, policy: savedPolicy } })
     const user = userEvent.setup(); renderUI(<Updates user={owner} />)
     expect(screen.queryByText(/Automatic update postponement deadline/)).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Postpone automatic updates 24h' }))
@@ -85,6 +86,31 @@ describe('panel update request and permission contracts', () => {
     mockAPI(() => ({ ...updateState, policy: { ...updateState.policy, postpone_until: until } }))
     renderUI(<Updates user={admin} />)
     expect(await screen.findByText(formatDate(until))).toBeVisible()
+  })
+  it('keeps postponement on ordinary policy saves and follows refreshed server deadlines', async () => {
+    const until = 1_793_664_000, newer = until + 3600
+    let savedPolicy = updateState.policy
+    const writes: unknown[] = []
+    mockAPI((path, init) => {
+      if (path === '/updates/postpone') { savedPolicy = { ...savedPolicy, postpone_until: until }; return savedPolicy }
+      if (path === '/updates/policy') { const body = JSON.parse(String(init.body)); writes.push(body); savedPolicy = { ...body, postpone_until: savedPolicy.postpone_until }; return savedPolicy }
+      return { ...updateState, policy: savedPolicy }
+    })
+    const user = userEvent.setup(); const { client } = renderUI(<Updates user={owner} />)
+    await user.click(await screen.findByRole('button', { name: 'Postpone automatic updates 24h' }))
+    expect(await screen.findByText(formatDate(until))).toBeVisible()
+    const interval = screen.getByLabelText('Check interval (hours)')
+    await user.clear(interval); await user.type(interval, '12')
+    await user.click(screen.getByRole('button', { name: 'Save panel update policy' }))
+    await waitFor(() => expect(writes).toEqual([{ ...updateState.policy, interval_hours: 12 }]))
+    expect(screen.getByText(formatDate(until))).toBeVisible()
+    savedPolicy = { ...savedPolicy, postpone_until: newer }
+    await act(async () => { await client.invalidateQueries({ queryKey: ['/updates'] }) })
+    expect(await screen.findByText(formatDate(newer))).toBeVisible()
+    expect(screen.queryByText(formatDate(until))).not.toBeInTheDocument()
+    savedPolicy = { ...savedPolicy, postpone_until: 0 }
+    await act(async () => { await client.invalidateQueries({ queryKey: ['/updates'] }) })
+    await waitFor(() => expect(screen.queryByText(/Automatic update postponement deadline/)).not.toBeInTheDocument())
   })
 })
 

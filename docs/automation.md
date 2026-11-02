@@ -67,6 +67,8 @@ Check/stage/apply/rollback operations return jobs. Automatic mode is not an auth
 
 An owner can defer automatic application with `POST /api/v1/updates/postpone` and `{"hours":24}` (1–168 hours). This returns the saved policy synchronously, including `postpone_until` in Unix seconds; it is not a queued update or a cancellation of already-started work.
 
+Saving ordinary policy fields preserves an existing postponement, including concurrent postponement requests. A direct policy API caller can explicitly replace `postpone_until`, or clear it with zero. The UI displays the latest server-reported policy deadline rather than retaining an older mutation response.
+
 ## Notifications, retention, and storage
 
 Owners configure integrations through `PUT /api/v1/settings`:

@@ -54,7 +54,18 @@ For check 12, independently record each mandatory release condition:
 5. Panel updates do not restart Minecraft or change world/mod files; record PIDs and filesystem evidence before and after.
 6. If permissions or signing configuration block publication, record the exact failure and retain releasable build code. Do not invent a release or substitute unsigned binaries.
 
-Current release version/status: **Unreleased; local SemVer planning proposes `v0.1.0`, not a published tag/release.** Read-only GitHub checks on 2026-11-02 found a public repository with no default branch, no releases, no configured environments and no repository secret names. Protected `main`, the `release` environment and `RELEASE_SIGNING_KEY` are not configured; they remain required before publication. No push, PR, CI-success badge or release URL is asserted.
+Current release version/status: **Unreleased; local SemVer planning proposes `v0.1.0`, not a published tag/release.** Initial read-only checks found an empty public repository. After explicit maintainer authorization, the integrated source was pushed and [draft PR #1](https://github.com/gabrielpgava/newempire-server-control/pull/1) was opened against a minimal bootstrap `main` containing no application or release workflow.
+
+## Publication preparation — 2026-11-02
+
+- `main` requires the GitHub Actions **Pull request policy** and **Validate** checks, an up-to-date branch, independent approval, code-owner review and approval of the latest push. Administrators are included; force pushes/deletion are denied; squash-only merges preserve the conventional PR title. Required review was not bypassed.
+- The protected **release** environment requires maintainer approval, prevents self-review and permits only protected branches. The `RELEASE_SIGNING_KEY` secret name is present; its value was not read or logged. A signing job must still verify that it matches the committed trust root.
+- GitHub Actions permits GitHub-owned actions with SHA pinning enforced. Default workflow permissions remain read-only and Actions cannot approve PRs. Immutable releases are enabled.
+- [Initial CI run](https://github.com/gabrielpgava/newempire-server-control/actions/runs/41517669577) passed PR policy and the complete formatting/frontend/OpenAPI/migrations/tests/build step at `d14d351`, but **failed security analysis**: pinned govulncheck v1.1.4 panicked in x/tools v0.29.0 with `unexpected expr: *ast.KeyValueExpr` on Linux amd64 / Go 1.27.3. This is not a passing vulnerability scan; compatible pinned tooling and a successful rerun are required.
+- GitHub rejected a proposed `v*` tag-creation ruleset because its built-in Actions integration was not eligible for that personal repository's bypass list. No blocking ruleset was installed and no broader writer/admin bypass was substituted. Immutable publication protects published assets/tags, but the separate pre-publication tag-creation control still needs a supported automation identity.
+- A real disposable ARM64 Linux VM and Minecraft EULA acceptance were explicitly authorized for test-only use. VM preparation is not yet host acceptance. No production server, credentials or valuable worlds are used.
+
+Two additional updater defects were identified during publication review: ordinary policy edits could clear postponement and retain a stale displayed deadline; the independent helper used a compiled schema value rather than independently checking the actual database before stopped-panel mutations. The postponement regression failed before its fix and now passes host race tests (three runs), isolated Linux policy/maintenance regressions, all **108 frontend tests**, typecheck/build and OpenAPI validation. Actual-schema enforcement and complete integrated verification remain in progress. No official release or live update/rollback success is asserted.
 
 ## Remaining release gates
 
