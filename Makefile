@@ -11,6 +11,7 @@ frontend:
 
 test: frontend
 	python3 -B -m unittest discover -s scripts -p '*_test.py'
+	python3 -B -m unittest discover -s deploy -p 'test_*.py'
 	go test -race -count=1 -timeout=5m ./...
 
 build: frontend

@@ -138,6 +138,9 @@ func (a *App) previewBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) backupInstance(ctx context.Context, storage *os.Root, id string, current model.Instance) (model.Instance, error) {
+	if !model.ValidID(id) {
+		return model.Instance{}, errors.New("invalid backup identifier")
+	}
 	metadata, err := files.ReadText(ctx, storage, id+".instance.json", 1<<20)
 	if err != nil {
 		return model.Instance{}, fmt.Errorf("portable instance metadata is unavailable; no restore was applied: %w", err)
@@ -240,6 +243,23 @@ func (a *App) createLocalBackup(ctx context.Context, t *jobs.Task, i model.Insta
 	return b, nil
 }
 func (a *App) registerBackupJobs() {
+	a.Jobs.Register("backup_offline", 0, func(ctx context.Context, t *jobs.Task, raw json.RawMessage) (any, error) {
+		var body struct {
+			Note string `json:"note"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, err
+		}
+		if len(body.Note) > 1000 {
+			return nil, errors.New("backup note must not exceed 1000 bytes")
+		}
+		i, err := a.Instances.Get(ctx, t.Job.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		b, err := a.safetyBackup(ctx, t, i, body.Note)
+		return map[string]any{"backup": b, "state": "offline"}, err
+	})
 	a.Jobs.Register("backup", 0, func(ctx context.Context, t *jobs.Task, raw json.RawMessage) (result any, err error) {
 		var body backupRequest
 		if err := json.Unmarshal(raw, &body); err != nil {

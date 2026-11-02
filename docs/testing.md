@@ -17,7 +17,7 @@ skipped checks in each PR.
 - `go test -race -count=1 -timeout=5m ./...`: all packages, including SQLite
   migrations, downgrade/backup behavior and the domain security tests actually
   present in the source. This is not a substitute for missing regression tests.
-- Python release-policy/SemVer/draft-publication tests and Go canonical-manifest,
+- Python deployment/installer tests in both `make check` and `make test`, plus release-policy/SemVer/draft-publication tests and Go canonical-manifest,
   signature, archive/ELF, corrupt-asset and deterministic-packaging tests.
 - Pinned `govulncheck` and `npm audit --omit=dev --audit-level=low`. Known production
   vulnerabilities fail the gate; unavailability of an audit service is a failure,
