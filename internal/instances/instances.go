@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -98,6 +99,44 @@ func (s *Service) List(ctx context.Context) ([]model.Instance, error) {
 }
 
 func (s *Service) Validate(i model.Instance) error {
+	if err := s.validateConfig(i); err != nil {
+		return err
+	}
+	root, err := s.OpenRoot(i.Root)
+	if err != nil {
+		return err
+	}
+	return root.Close()
+}
+
+// ValidateForRecovery permits only the final instance directory to be absent.
+func (s *Service) ValidateForRecovery(i model.Instance) error {
+	if err := s.validateConfig(i); err != nil {
+		return err
+	}
+	parent, target, err := s.OpenParent(i.Root)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	info, err := parent.Lstat(target)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("instance recovery target must be a directory, not a link or special file")
+	}
+	root, err := parent.OpenRoot(target)
+	if err != nil {
+		return err
+	}
+	return root.Close()
+}
+
+func (s *Service) validateConfig(i model.Instance) error {
 	if !model.ValidID(i.ID) || len(i.Name) < 1 || len(i.Name) > 100 || strings.TrimSpace(i.Name) != i.Name {
 		return errors.New("invalid instance name or identifier")
 	}
@@ -142,11 +181,7 @@ func (s *Service) Validate(i model.Instance) error {
 	if _, err := Relative(i.Root, s.Config.DataDir); err == nil {
 		return errors.New("instance directory cannot contain the panel data directory")
 	}
-	root, err := s.OpenRoot(i.Root)
-	if err != nil {
-		return err
-	}
-	return root.Close()
+	return nil
 }
 
 func Relative(base, path string) (string, error) {
