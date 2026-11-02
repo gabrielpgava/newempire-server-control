@@ -62,7 +62,7 @@ describe('instance creation', () => {
     await user.type(screen.getByLabelText('Instance name'), 'Test survival')
     await user.selectOptions(screen.getByLabelText('Minecraft version'), 'test-game')
     await user.selectOptions(screen.getByLabelText('Fabric loader'), 'test-loader')
-    await user.selectOptions(screen.getByLabelText('Fabric installer'), 'test-installer')
+    expect(screen.getByLabelText('Fabric installer')).toHaveValue('test-installer')
     await user.selectOptions(screen.getByLabelText(/Java runtime/), '/usr/bin/java')
     await user.click(screen.getByRole('checkbox', { name: /Minecraft EULA/ }))
     await user.click(screen.getByRole('button', { name: 'Create Fabric server' }))

@@ -60,7 +60,7 @@ export function validateUploadURL(value: string, origin = window.location.origin
   return url
 }
 
-export function UploadPanel({ onComplete, onReset, disabled, scope }: { onComplete: (upload: CompletedUpload) => void; onReset?: () => void; disabled?: boolean; scope: string }) {
+export function UploadPanel({ onComplete, onReset, disabled, scope, modpack = false }: { onComplete: (upload: CompletedUpload) => void; onReset?: () => void; disabled?: boolean; scope: string; modpack?: boolean }) {
   const [mode, setMode] = useState<'archive' | 'folder'>('archive')
   const [files, setFiles] = useState<File[]>([])
   const [state, setState] = useState<'idle' | 'packaging' | 'uploading' | 'paused' | 'complete'>('idle')
@@ -78,6 +78,7 @@ export function UploadPanel({ onComplete, onReset, disabled, scope }: { onComple
     try {
       if (!files.length) throw new Error('Choose an archive or folder first.')
       let file = files[0]
+      if (modpack && !/\.mrpack$/i.test(file.name)) throw new Error('Choose a server modpack with the .mrpack extension. The server validates its contents before applying it.')
       if (mode === 'folder') {
         setState('packaging'); setBytes(0); setTotal(files.reduce((sum, item) => sum + item.size, 0))
         packaging.current = new AbortController()
@@ -118,9 +119,9 @@ export function UploadPanel({ onComplete, onReset, disabled, scope }: { onComple
     try { await upload.current?.abort(true); upload.current = null; setState('idle'); setBytes(0); setError(null); onReset?.() } catch (cause) { setError(cause) }
   }
   return <div className="upload-panel">
-    <fieldset className="inline-options" disabled={busy || disabled}><legend>Upload source</legend><label><input type="radio" name={`upload-${scope}`} checked={mode === 'archive'} onChange={() => { setMode('archive'); setFiles([]); setState('idle'); onReset?.() }} /><FileArchive size={17} />Archive</label><label><input type="radio" name={`upload-${scope}`} checked={mode === 'folder'} onChange={() => { setMode('folder'); setFiles([]); setState('idle'); onReset?.() }} /><FolderUp size={17} />Folder</label></fieldset>
-    <Field label={mode === 'archive' ? 'Choose a ZIP or tar.gz archive' : 'Choose a folder'} hint={mode === 'folder' ? 'Nested paths are preserved. Folders up to 512 MiB are packaged locally as ZIP; empty directories are not included.' : 'Uploads are staged separately from the instance and can resume after interruption.'}>
-      <input ref={fileRef} key={mode} type="file" disabled={busy || disabled} accept={mode === 'archive' ? '.zip,.tar.gz,.tgz' : undefined} {...(mode === 'folder' ? { webkitdirectory: '', directory: '', multiple: true } : {})} onChange={event => { setFiles(Array.from(event.target.files ?? [])); setState('idle'); setError(null); onReset?.() }} />
+    {!modpack && <fieldset className="inline-options" disabled={busy || disabled}><legend>Upload source</legend><label><input type="radio" name={`upload-${scope}`} checked={mode === 'archive'} onChange={() => { setMode('archive'); setFiles([]); setState('idle'); onReset?.() }} /><FileArchive size={17} />Archive</label><label><input type="radio" name={`upload-${scope}`} checked={mode === 'folder'} onChange={() => { setMode('folder'); setFiles([]); setState('idle'); onReset?.() }} /><FolderUp size={17} />Folder</label></fieldset>}
+    <Field label={modpack ? 'Choose a server .mrpack file' : mode === 'archive' ? 'Choose a ZIP or tar.gz archive' : 'Choose a folder'} hint={mode === 'folder' ? 'Nested paths are preserved. Folders up to 512 MiB are packaged locally as ZIP; empty directories are not included.' : 'Uploads are staged separately from the instance and can resume after interruption.'}>
+      <input ref={fileRef} key={mode} type="file" disabled={busy || disabled} accept={modpack ? '.mrpack' : mode === 'archive' ? '.zip,.tar.gz,.tgz' : undefined} {...(mode === 'folder' ? { webkitdirectory: '', directory: '', multiple: true } : {})} onChange={event => { setFiles(Array.from(event.target.files ?? [])); setState('idle'); setError(null); onReset?.() }} />
     </Field>
     {files.length > 0 && <p className="muted">{files.length === 1 ? files[0].name : `${files.length.toLocaleString()} files selected`} · {formatBytes(files.reduce((sum, file) => sum + file.size, 0))}</p>}
     {!!error && <ErrorNotice error={new Error(errorMessage(error))} />}
