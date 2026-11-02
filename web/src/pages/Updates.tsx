@@ -1,23 +1,69 @@
 import { ArrowDownToLine, CheckCircle2, RefreshCw, RotateCcw } from 'lucide-react'
 import { canAdmin, formatBytes, useAPI, useOperation, type UpdatePolicy, type UpdateState, type User } from '../api'
-import { Button, ErrorNotice, Field, JsonDetails, Notice, OperationFeedback, PageHeading, QueryState, ReadOnly, Section, Status, SubmitForm, useConfirm } from '../components'
+import { Button, DateText, ErrorNotice, Field, JsonDetails, Notice, OperationFeedback, PageHeading, QueryState, Section, Status, SubmitForm, useConfirm } from '../components'
 
 export function Updates({ user }: { user: User }) {
-  const updates = useAPI<UpdateState>('/updates', { interval: 10_000 })
+  const updates = useAPI<UpdateState>('/updates', { enabled: canAdmin(user), interval: 10_000 })
   const operation = useOperation()
   const policy = useOperation<UpdatePolicy>()
+  const postpone = useOperation<UpdatePolicy>()
   const confirm = useConfirm()
-  const allowed = canAdmin(user)
-  async function action(kind: string) {
-    if (['apply', 'rollback'].includes(kind) && !await confirm({ title: kind === 'apply' ? 'Update the control panel?' : 'Roll back the control panel?', body: <><p>The panel will briefly disconnect while its independent updater restarts this application. Minecraft services and world files must remain untouched.</p><p>{kind === 'apply' ? 'Only an officially verified staged release can be applied. A failed post-update health check must restore the previous panel binary.' : 'The updater will validate the retained panel version and its recovery record before switching.'}</p></>, action: kind === 'apply' ? 'Apply verified panel update' : 'Roll back panel', danger: true })) return
-    await operation.run(`/updates/${kind}`).catch(() => {})
+  const allowed = user.role === 'owner'
+  const postponedUntil = postpone.data?.postpone_until ?? updates.data?.policy.postpone_until
+  async function action(kind: 'check' | 'stage' | 'apply' | 'rollback') {
+    if (!allowed) return
+    const destructive = kind === 'apply' || kind === 'rollback'
+    if (destructive && !await confirm({ title: kind === 'apply' ? 'Update the control panel?' : 'Roll back the control panel?', body: <><p>The panel will briefly disconnect while its independent updater restarts this application. Minecraft services and world files must remain untouched.</p><p>{kind === 'apply' ? 'Only an officially verified staged release can be applied. A failed post-update health check must restore the previous panel binary.' : 'The updater will validate the retained panel version and its recovery record before switching.'}</p></>, action: kind === 'apply' ? 'Apply verified panel update' : 'Roll back panel', danger: true })) return
+    await operation.run(`/updates/${kind}`, destructive ? { confirm: true } : {}).catch(() => {})
   }
-  return <><PageHeading title="Application updates" description="Updates apply to New Empire Server Control, not Minecraft or world data." actions={allowed && <Button busy={operation.isPending} onClick={() => { void action('check') }}><RefreshCw size={16} />Check official releases</Button>} />{!allowed && <ReadOnly admin />}<OperationFeedback operation={operation} />
-    <QueryState query={updates}>{data => <><Section title="Release status" actions={<Status value={data.state} />}><dl className="key-values"><div><dt>Installed version</dt><dd><strong>{data.current_version}</strong></dd></div><div><dt>Official repository</dt><dd><code>{data.repository}</code></dd></div><div><dt>Available release</dt><dd>{data.available ? <>{data.available.version}{data.available.prerelease && <span className="status status-warn">Prerelease</span>} · {formatBytes(data.available.size)}</> : 'No available release reported'}</dd></div></dl>{data.detail && <Notice tone={data.state === 'failed' ? 'warning' : 'info'}>{data.detail}</Notice>}{data.available?.notes && <details className="release-notes"><summary>Release notes for {data.available.version}</summary><pre>{data.available.notes}</pre></details>}<div className="actions">{allowed && <><Button disabled={!data.available || operation.isPending} onClick={() => { void action('stage') }}><ArrowDownToLine size={16} />Stage and verify release</Button><Button variant="primary" disabled={data.state !== 'staged' || operation.isPending} onClick={() => { void action('apply') }}><CheckCircle2 size={16} />Apply verified staged update</Button><Button disabled={!data.history.length || operation.isPending} onClick={() => { void action('rollback') }}><RotateCcw size={16} />Roll back panel</Button></>}</div><p className="muted">Staging verifies official release identity, architecture, checksums, and authenticated release evidence. A missing signing key or updater helper is a failure, not a successful update.</p></Section>
-      <Section title="Panel update policy" description="Automatic panel updates require explicit opt-in and the same release verification as manual updates."><SubmitForm onSubmit={async form => {
-        const body = { mode: String(form.get('mode')), channel: String(form.get('channel')), interval_hours: Number(form.get('interval_hours')), window_start: String(form.get('window_start')), window_end: String(form.get('window_end')), timezone: String(form.get('timezone')) }
-        if ((body.mode === 'automatic' || body.channel === 'beta') && !await confirm({ title: body.channel === 'beta' ? 'Save a beta-channel update policy?' : 'Enable automatic panel updates?', body: <p>{body.channel === 'beta' ? 'The beta channel may include prereleases. They still require authenticated verification, but may contain less-tested changes.' : 'The panel may restart itself during the maintenance window after verifying an official release. Minecraft must not be restarted.'}</p>, action: 'Save update policy', danger: true })) return
-        await policy.run('/updates/policy', body, 'PUT')
-      }}><fieldset disabled={!allowed || policy.isPending}><div className="form-grid"><Field label="Mode"><select name="mode" defaultValue={data.policy.mode}><option value="disabled">Disabled</option><option value="notify">Notify only</option><option value="automatic">Automatic verified updates</option></select></Field><Field label="Release channel"><select name="channel" defaultValue={data.policy.channel}><option value="stable">Stable</option><option value="beta">Beta (prereleases)</option></select></Field><Field label="Check interval (hours)"><input name="interval_hours" type="number" min={1} max={720} required defaultValue={data.policy.interval_hours} /></Field><Field label="Window starts"><input name="window_start" type="time" required defaultValue={data.policy.window_start} /></Field><Field label="Window ends"><input name="window_end" type="time" required defaultValue={data.policy.window_end} /></Field><Field label="IANA timezone"><input name="timezone" required defaultValue={data.policy.timezone} /></Field></div>{allowed && <Button type="submit" busy={policy.isPending}>Save panel update policy</Button>}</fieldset></SubmitForm>{policy.error && <ErrorNotice error={policy.error} />}{policy.isSuccess && <Notice tone="success">Panel update policy saved.</Notice>}</Section>{data.history.length > 0 && <Section title="Update history"><JsonDetails value={data.history} label="Recorded panel updates and recovery" /></Section>}</>}</QueryState>
+  return <>
+    <PageHeading title="Application updates" description="Updates apply to New Empire Server Control, not Minecraft or world data." actions={allowed && <Button busy={operation.isPending} onClick={() => { void action('check') }}><RefreshCw size={16} />Check official releases</Button>} />
+    {!allowed && <p className="read-only">Only the owner can check, stage, apply, roll back, postpone, or change panel update policies.</p>}
+    {!canAdmin(user) && <Notice>An administrator or owner role is required to view panel release information.</Notice>}
+    <OperationFeedback operation={operation} />
+    {canAdmin(user) && <QueryState query={updates}>{data => <>
+      <Section title="Release status" actions={<Status value={data.state} />}>
+        <dl className="key-values">
+          <div><dt>Installed version</dt><dd><strong>{data.current_version}</strong></dd></div>
+          <div><dt>Official repository</dt><dd><code>{data.repository}</code></dd></div>
+          <div><dt>Available release</dt><dd>{data.available ? <>{data.available.version}{data.available.prerelease && <span className="status status-warn">Prerelease</span>} · {formatBytes(data.available.size)}</> : 'No available release reported'}</dd></div>
+        </dl>
+        {data.detail && <Notice tone={data.state === 'failed' ? 'warning' : 'info'}>{data.detail}</Notice>}
+        {data.available?.notes && <details className="release-notes"><summary>Release notes for {data.available.version}</summary><pre>{data.available.notes}</pre></details>}
+        {allowed && <div className="actions">
+          <Button disabled={!data.available || operation.isPending} onClick={() => { void action('stage') }}><ArrowDownToLine size={16} />Stage and verify release</Button>
+          <Button variant="primary" disabled={data.state !== 'staged' || operation.isPending} onClick={() => { void action('apply') }}><CheckCircle2 size={16} />Apply verified staged update</Button>
+          <Button disabled={!data.history.length || operation.isPending} onClick={() => { void action('rollback') }}><RotateCcw size={16} />Roll back panel</Button>
+        </div>}
+        <p className="muted">Staging verifies official release identity, architecture, checksums, and authenticated release evidence. A missing signing key or updater helper is a failure, not a successful update.</p>
+      </Section>
+      <Section title="Panel update policy" description="Automatic panel updates require explicit opt-in and the same release verification as manual updates.">
+        <SubmitForm onSubmit={async form => {
+          if (!allowed) return
+          const body = { mode: String(form.get('mode')), channel: String(form.get('channel')), interval_hours: Number(form.get('interval_hours')), window_start: String(form.get('window_start')), window_end: String(form.get('window_end')), timezone: String(form.get('timezone')) }
+          if ((body.mode === 'automatic' || body.channel === 'beta') && !await confirm({ title: body.channel === 'beta' ? 'Save a beta-channel update policy?' : 'Enable automatic panel updates?', body: <p>{body.channel === 'beta' ? 'The beta channel may include prereleases. They still require authenticated verification, but may contain less-tested changes.' : 'The panel may restart itself during the maintenance window after verifying an official release. Minecraft must not be restarted.'}</p>, action: 'Save update policy', danger: true })) return
+          await policy.run('/updates/policy', body, 'PUT')
+        }}>
+          <fieldset disabled={!allowed || policy.isPending}>
+            <div className="form-grid">
+              <Field label="Mode"><select name="mode" defaultValue={data.policy.mode}><option value="disabled">Disabled</option><option value="notify">Notify only</option><option value="automatic">Automatic verified updates</option></select></Field>
+              <Field label="Release channel"><select name="channel" defaultValue={data.policy.channel}><option value="stable">Stable</option><option value="beta">Beta (prereleases)</option></select></Field>
+              <Field label="Check interval (hours)"><input name="interval_hours" type="number" min={1} max={168} required defaultValue={data.policy.interval_hours} /></Field>
+              <Field label="Window starts"><input name="window_start" type="time" required defaultValue={data.policy.window_start} /></Field>
+              <Field label="Window ends"><input name="window_end" type="time" required defaultValue={data.policy.window_end} /></Field>
+              <Field label="IANA timezone"><input name="timezone" required defaultValue={data.policy.timezone} /></Field>
+            </div>
+            {allowed && <Button type="submit" busy={policy.isPending}>Save panel update policy</Button>}
+          </fieldset>
+        </SubmitForm>
+        {policy.error && <ErrorNotice error={policy.error} />}
+        {policy.isSuccess && <Notice tone="success">Panel update policy saved.</Notice>}
+        {allowed && <Button busy={postpone.isPending} onClick={() => { void postpone.run('/updates/postpone', { hours: 24 }).catch(() => {}) }}>Postpone automatic updates 24h</Button>}
+        {postponedUntil !== undefined && postponedUntil > 0 && <p className="muted">Automatic update postponement deadline: <DateText value={postponedUntil} /></p>}
+        {postpone.error && <ErrorNotice error={postpone.error} />}
+        {postpone.isSuccess && <Notice tone="success">Update postponement saved.</Notice>}
+      </Section>
+      {data.history.length > 0 && <Section title="Update history"><JsonDetails value={data.history} label="Recorded panel updates and recovery" /></Section>}
+    </>}</QueryState>}
   </>
 }
