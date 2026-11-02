@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/gabrielpgava/newempire-server-control/internal/config"
 	"github.com/gabrielpgava/newempire-server-control/internal/database"
@@ -223,11 +224,16 @@ func (s *Service) CheckCollisions(ctx context.Context, root string, port, rconPo
 		}
 	}
 	for _, p := range []int{port, rconPort} {
-		listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", p))
-		if err != nil {
-			return fmt.Errorf("port %d is already in use or unavailable", p)
+		for _, family := range []struct{ network, host string }{{"tcp4", "0.0.0.0"}, {"tcp6", "::"}} {
+			listener, err := net.Listen(family.network, net.JoinHostPort(family.host, fmt.Sprint(p)))
+			if family.network == "tcp6" && (errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EADDRNOTAVAIL)) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("port %d is already in use or unavailable for %s", p, family.network)
+			}
+			listener.Close()
 		}
-		listener.Close()
 	}
 	return nil
 }

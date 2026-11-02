@@ -2,8 +2,11 @@ package instances
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,5 +67,29 @@ func TestIsolatedRootsAndCrossPortCollision(t *testing.T) {
 	}
 	if _, err := s.OpenRoot(link); err == nil {
 		t.Fatal("escaped trusted parent via instance symlink")
+	}
+}
+
+func TestCollisionPreflightRejectsIPv6OnlyListener(t *testing.T) {
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skip("IPv6 loopback is unavailable:", err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	ipv4, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		t.Fatal("fixture is not IPv6-only:", err)
+	}
+	ipv4.Close()
+	db, err := database.Open(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &Service{DB: db}
+	err = s.CheckCollisions(t.Context(), filepath.Join(t.TempDir(), "instance"), port, port-1)
+	if err == nil || !strings.Contains(err.Error(), "tcp6") {
+		t.Fatalf("IPv6-only server was not detected before adoption: %v", err)
 	}
 }
