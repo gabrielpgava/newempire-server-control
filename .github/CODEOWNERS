@@ -1,0 +1,7 @@
+# Enable required code-owner review in the main branch ruleset.
+/.github/ @gabrielpgava
+/scripts/release* @gabrielpgava
+/scripts/check* @gabrielpgava
+/Makefile @gabrielpgava
+/deploy/release-public-key.txt @gabrielpgava
+/docs/releases.md @gabrielpgava
