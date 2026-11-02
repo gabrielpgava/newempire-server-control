@@ -209,7 +209,7 @@ backups are separate. Never restore a world merely because a panel update failed
 ### Run recovery outside the panel
 
 The integrated restricted CLI helper must invoke `updates.Manager.Recover(ctx)`
-with the configured install directory, pinned public key, observed database
+with the configured install directory, pinned public key, supported database
 schema, panel service adapter, and consistent snapshot/restore callbacks. It does
 not need GitHub access or a running panel. The CLI's concrete command is owned by
 the application integration; this domain does not install or claim an additional
@@ -219,7 +219,7 @@ standalone recovery command.
 | --- | --- |
 | No transaction, `staged`, `complete`, `failed`, `rolled_back` | No automatic mutation. A staged release remains staged. |
 | `downloading` | Records failed interrupted staging; explicitly stage again. |
-| `stopping`, `snapshotting` | Restarts/checks the unchanged original panel; no database restore. |
+| `stopping`, `snapshotting` | Checks actual stopped-state schema before restarting/checking the unchanged panel; no database restore. Unsafe state stays stopped. |
 | `installing`, `checking_health`, `rolling_back` | Verifies the preserved binary and snapshot, stops only the panel, restores SQLite/config, switches to the old binary, restarts/checks it. |
 | `manual_recovery` | Retries the recorded rollback, or restarts the unchanged panel if application never reached a completed snapshot. Errors remain visible when recovery is unsafe. |
 
@@ -238,8 +238,11 @@ files are reverted.
 
 ### When automatic recovery refuses
 
-- **Schema differs:** do not run an older binary against the newer SQLite schema.
-  Preserve the current database and snapshot. An administrator must choose and
+- **Actual schema differs, or the database is missing/empty/unsafe:** the helper
+  checks protected copies with committed WAL and never initializes or migrates
+  them. It refuses both automatic restore and startup, including restarting an
+  unchanged panel after an aborted update. Keep the panel stopped; preserve the
+  current database, sidecars and snapshot. An administrator must choose and
   execute a version-specific manual migration/recovery plan; automatic recovery
   fails closed.
 - **Snapshot hash, file set, permissions, or manifest changed:** preserve the

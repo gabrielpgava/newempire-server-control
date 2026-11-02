@@ -142,15 +142,26 @@ names, paths, or commands from a request.
 
 ## Schema, cancellation, and progress
 
-Automatic staging/application/rollback requires the release and installed
-SQLite **schema to be identical**. The helper must determine the actual installed
-schema without running migrations first. Schema-changing upgrades need an
+Online checks/staging compare the signed release schema with the running binary's
+supported schema; they do not stop the panel or open its live database as root.
+After stopping the panel, snapshot/install, restore, and every helper-controlled
+restart require the actual SQLite **schema to be identical** to that supported
+schema. While holding the existing `panel.lock`, the helper validates bounded,
+private database/sidecar files and opens only a root-private copy with
+`database.OpenExisting`, preserving committed WAL without initialization or
+migrations. Restore checks both installed state and the verified standalone
+snapshot before replacing files. The lock is released before service startup.
+
+Missing, empty, unsafe, or mismatched state prevents automatic restore/restart and
+leaves the panel stopped with `manual_recovery` diagnostics rather than letting
+normal startup initialize or migrate it. Schema-changing upgrades need an
 administrator-planned manual migration and recovery procedure; changing a flag or
 lying about the schema is not a supported bypass.
 
 Cancellation is honored during network reads, verification, and pre-switch
-snapshotting. If the panel was already stopped, it is restarted safely before
-reporting cancellation. Once a verified snapshot is ready and installation
+snapshotting. If the panel was already stopped, it is restarted before reporting
+cancellation only when the stopped-state schema guard permits it; otherwise it
+remains stopped for manual recovery. Once a verified snapshot is ready and installation
 begins, the helper finishes installation or recovery using a separate bounded
 context; killing that process is not safe cancellation.
 Snapshot/restore adapters require the existing regular, single-link `panel.lock`

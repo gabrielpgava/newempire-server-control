@@ -104,8 +104,17 @@ when the panel cannot start: interrupted staging is marked failed, interrupted
 application rolls back, and interrupted rollback is retried. Schema-mismatched
 snapshots fail closed for manual recovery. No world data is restored.
 
-The helper must observe the actual installed SQLite schema without first running
-migrations. Reconcile panel update jobs against this filesystem journal after a
+Online check/stage validates the release against the binary's supported schema
+without stopping the panel. At stopped-panel snapshot/install, restore and restart
+boundaries, the native adapter holds the existing `panel.lock`, validates the
+bounded private main/sidecar files, and opens only root-private copies with
+`database.OpenExisting`. It never initializes or migrates state and includes
+committed WAL pages. Restore validates installed and snapshot schemas before
+replacing files; recovery snapshots must be standalone databases. Restart releases
+the lock before invoking systemd. Unsafe, missing, empty or mismatched state
+refuses restore/start and retains `manual_recovery` diagnostics.
+
+Reconcile panel update jobs against this filesystem journal after a
 database restore: the snapshot may contain a formerly running apply job; do not
 blindly resubmit it. Manual rollback reverts panel settings/users/sessions changed
 since the snapshot and requires administrator confirmation at the caller.

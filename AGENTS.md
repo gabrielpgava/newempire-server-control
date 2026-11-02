@@ -26,6 +26,7 @@ This file is binding guidance for every coding agent contributing to this reposi
 - Module path is `github.com/gabrielpgava/newempire-server-control`. Shared domain types live in `internal/model`; domain packages must not import HTTP handlers. See `docs/integration-contract.md` for integration boundaries.
 - The executable entrypoint is `cmd/control`; `internal/api` integrates domain services, durable jobs, and authenticated HTTP routes. Native helpers use `internal/servicehelper`; the independent updater exchanges bounded request/report files through `internal/panelupdate`.
 - Offline recovery and existing-database diagnostics hold `panel.lock` and use existing-only state loaders. They must not initialize/migrate state, generate a replacement key, start HTTP workers, or execute unrelated queued jobs.
+- Panel updater checks/staging stay online. Its stopped-panel snapshot, restore and restart boundaries validate actual SQLite schema on bounded root-private copies with committed WAL and the existing `panel.lock`, never migrations; unsafe state stays stopped for manual recovery. Release the lock before starting the panel.
 - Runtime version choices come from Fabric and Mojang metadata. Go 1.27 is the verified build baseline; `.go-version` and `go.mod` are the build-toolchain authority.
 - The repository is licensed under PolyForm Shield 1.0.0 by the owner's explicit selection. Describe it as source-available, not OSI-approved open source.
 
