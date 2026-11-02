@@ -38,6 +38,10 @@ func Open(path string) (*Vault, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || len(key) != 32 {
 		return nil, errors.New("master key must be a 32-byte regular file accessible only by its owner")
 	}
+	return newVault(key)
+}
+
+func newVault(key []byte) (*Vault, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err

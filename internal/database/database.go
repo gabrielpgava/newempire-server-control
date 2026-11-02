@@ -20,6 +20,8 @@ var migrations embed.FS
 
 const SchemaVersion = 1
 
+const connectionOptions = "_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(FULL)&_txlock=immediate"
+
 type Store struct {
 	*sql.DB
 	Path string
@@ -30,7 +32,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	u := &url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String()+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(FULL)&_txlock=immediate")
+	db, err := sql.Open("sqlite", u.String()+"?"+connectionOptions)
 	if err != nil {
 		return nil, err
 	}
