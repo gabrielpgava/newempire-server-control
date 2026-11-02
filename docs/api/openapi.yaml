@@ -322,11 +322,27 @@ paths:
       description: |
         Every mode needs explicit EULA acceptance, versions, an allowlisted Java
         path, memory, and distinct unprivileged game/RCON ports. Import/adopt
-        require a matching preview_hash and explicit safe detected launcher.
-        Adopt never silently rewrites external files or unsafe RCON settings.
-        The accepted job reserves instance_id; successful result.instance is the
-        created record. Service provisioning/firewall requirements remain real
-        host prerequisites, not simulated successes.
+        must echo preview_hash, server_root, the rebased detected jar, and the
+        inspected Minecraft/Fabric versions. The job repeats static Fabric
+        bootstrap inspection and authoritative Java-minimum checks before
+        provisioning; these modes do not migrate runtime versions. Import
+        installs only the reported subtree, not an outer archive wrapper.
+
+        Adopt requires reservation_id and server_root '.'. The persisted
+        reservation binds the requesting user, canonical path, and preview hash;
+        its ID is the accepted job's instance_id, and its creation time survives
+        retries. After successful preflight, immediately before the first helper
+        provisioning attempt, registration settings become immutable. Retry the
+        same name, Java/launcher, versions, memory, ports, and EULA after reviewed
+        host ACL/access preparation, even if the prior helper reply was lost.
+        A preflight failure before that attempt does not freeze the settings.
+        Repeating a completed adoption returns result.state registered with the
+        existing record, without provisioning again or starting Minecraft.
+
+        Adoption preserves source contents, ownership, modes, and ACLs; it does
+        not silently rewrite unsafe RCON settings. Successful result.instance is
+        the registered record. Service permissions, firewall isolation, and
+        stopped-source requirements remain real host prerequisites.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -362,7 +378,20 @@ paths:
     post:
       operationId: previewAdoption
       tags: [Instances]
-      summary: Inspect an existing allowlisted directory without adopting it
+      summary: Inspect an allowlisted server directory and reserve its adoption identity
+      description: |
+        path must be the canonical absolute actual server directory, not an
+        archive-style wrapper. Requires exactly one statically identifiable
+        unattended Fabric bootstrap beside server.properties; never executes
+        the source JAR. Returns server_root '.', detected runtime/Java fields,
+        a persisted reservation_id, and the dedicated service_account to prepare
+        through reviewed host administration before adoption.
+
+        Repeated previews by the same user for the same path/hash reuse the
+        reservation, including after panel restart. Optional reservation_id
+        explicitly reopens that reservation; a different user, path, or source
+        hash fails. Permission/ACL-only changes do not change the content hash.
+        This preview does not adopt the directory or repair its permissions.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -373,7 +402,11 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/AdoptionPreviewRequest'}
       responses:
-        '200': {$ref: '#/components/responses/ImportPreview'}
+        '200':
+          description: Root-normalized source inspection and persisted adoption identity.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdoptionPreview'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -382,7 +415,21 @@ paths:
       operationId: previewInitialImport
       tags: [Files]
       summary: Inspect a completed upload before creating an instance
-      description: Upload must belong to the current user and be complete/unexpired.
+      description: |
+        Upload must belong to the current user and be complete/unexpired. Safely
+        extracts into private temporary staging and selects exactly one supported
+        unattended Fabric bootstrap beside server.properties, inspecting at most
+        32 candidate JARs outside mods/libraries/.fabric. Multiple supported
+        launchers/server roots, unidentifiable legacy/custom/non-Fabric sources,
+        and unsafe level-name settings fail; no source JAR is executed.
+
+        Returns server_root, minecraft_version, loader_version, and java_required.
+        files, worlds, launchers, file_count, and total_bytes describe only that
+        subtree, with paths rebased to its root. preview_hash binds the original
+        source, selected root, launcher, runtime versions, and Java minimum.
+        Static launcher metadata is not proof of origin or mod compatibility;
+        import only trusted code. Existing-instance file imports use a separate
+        path-preserving preview/apply workflow without server_root semantics.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -661,6 +708,7 @@ paths:
       operationId: previewInstanceImport
       tags: [Files]
       summary: Inspect a completed upload against an existing instance
+      description: Preserves archive-relative paths and the existing conflict/backup contract. Does not select a server_root, inspect a new-instance runtime, or reserve an adoption identity.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -689,6 +737,8 @@ paths:
         ownership/completeness and preview_hash, takes the required restore
         point and stopped-runtime checks, and applies under the instance lock.
         A changed/stale preview fails; uploading is never itself an import.
+        Paths remain archive-relative; this is not the root-normalized
+        new-instance import workflow and accepts no server_root selection.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -1024,10 +1074,18 @@ paths:
         After preflight it checks space, stops Minecraft if necessary, creates a
         verified pre-restore backup, validates same-filesystem staging, and swaps
         data under the instance lock and commit barrier, retaining the original.
-        Archived Java path, launcher JAR, or memory changes trigger restricted
-        service-helper reconfiguration before the instance record is updated.
-        Minecraft remains stopped for review. Inspect result.restore even on
-        failure; a post-swap helper/database error does not undo restored worlds.
+        Reconfigures the existing service with archived Java, launcher JAR, and
+        memory settings before updating the instance record, including replay
+        after an ambiguous prior helper acknowledgement. Minecraft remains
+        stopped for review. Inspect result.restore even on failure; a post-swap
+        helper/database error does not undo restored worlds.
+
+        A persisted pending-restore guard blocks starts and new file mutations
+        until explicitly confirmed offline reconciliation verifies the retained
+        in-place data against the selected recovery snapshot and completes
+        helper/database metadata. Reconciliation does not choose or replace a
+        world automatically. restore_reconcile is an internal job kind, not an
+        HTTP endpoint exposed by this API.
       x-minimum-role: admin
       parameters:
         - {$ref: '#/components/parameters/Origin'}
@@ -2008,7 +2066,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Job'}
     ImportPreview:
-      description: Bound inspection identity, safe paths, warnings, and detected runtime/world candidates.
+      description: Hash-bound initial-instance source inspection with a selected server root, rebased paths, detected runtime, and required Java major.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ImportPreview'}
@@ -2304,30 +2362,34 @@ components:
       required: [mode, name, java_path, minecraft_version, loader_version, memory_mb, port, rcon_port, eula]
       properties:
         mode: {type: string, enum: [create, import, adopt]}
-        name: {type: string, minLength: 1, maxLength: 100, description: No surrounding whitespace.}
+        name: {type: string, minLength: 1, maxLength: 100, description: Limited to 100 UTF-8 bytes; no surrounding whitespace or control characters.}
         java_path: {type: string, minLength: 1, description: Exact absolute path in host Java allowlist.}
-        jar: {$ref: '#/components/schemas/RelativePath', description: Safe relative JAR. Required for import/adopt; create defaults to fabric-server-launch.jar.}
-        minecraft_version: {type: string, minLength: 1}
-        loader_version: {type: string, minLength: 1}
-        installer_version: {type: string, description: Explicit Fabric installer selection when required for generated runtime.}
+        jar: {$ref: '#/components/schemas/RelativePath', description: 'Safe relative JAR. Required for import/adopt, exactly matching the reported launcher rebased to server_root; create defaults to fabric-server-launch.jar.'}
+        minecraft_version: {type: string, minLength: 1, description: Import/adopt must echo the detected source version rather than select a migration.}
+        loader_version: {type: string, minLength: 1, description: Import/adopt must echo the detected Fabric loader version.}
+        installer_version: {type: string, description: Explicit installer selection for fresh generated runtimes; not an import/adoption runtime override.}
         memory_mb: {type: integer, minimum: 512, maximum: 1048576}
         port: {type: integer, minimum: 1024, maximum: 65535}
         rcon_port: {type: integer, minimum: 1024, maximum: 65535, description: Distinct from game port and other registered ports; must be externally isolated.}
         eula: {type: boolean, const: true}
         upload_id: {$ref: '#/components/schemas/ID'}
-        path: {type: string, description: Existing absolute directory below an administrator-allowlisted adoption root.}
+        path: {type: string, description: Canonical absolute actual server directory below an administrator-allowlisted adoption root.}
         preview_hash: {$ref: '#/components/schemas/SHA256'}
+        server_root: {$ref: '#/components/schemas/RelativePath', description: 'Required exact root from initial-instance inspection: dot or a safe archive-relative subtree for import, dot only for adoption. Omit for fresh creation; nonempty values are rejected there.'}
+        reservation_id: {$ref: '#/components/schemas/ID', description: Persisted adoption reservation returned by preview; must match the requesting user/path/hash. Omit for other modes.}
       allOf:
         - if:
             properties:
               mode: {const: import}
           then:
-            required: [upload_id, preview_hash, jar]
+            required: [upload_id, preview_hash, jar, server_root]
         - if:
             properties:
               mode: {const: adopt}
           then:
-            required: [path, preview_hash, jar]
+            required: [path, preview_hash, jar, server_root, reservation_id]
+            properties:
+              server_root: {const: .}
     AdoptionRoots:
       type: object
       additionalProperties: false
@@ -2339,7 +2401,8 @@ components:
       additionalProperties: false
       required: [path]
       properties:
-        path: {type: string, minLength: 1, description: Absolute existing directory below an allowed root.}
+        path: {type: string, minLength: 1, description: Canonical absolute actual server directory below an allowed root; wrappers are rejected.}
+        reservation_id: {$ref: '#/components/schemas/ID', description: Optional existing reservation to reopen for the same requesting user/path/source hash.}
     UploadPreviewRequest:
       type: object
       additionalProperties: false
@@ -2365,7 +2428,17 @@ components:
         total_bytes: {type: integer, format: int64, minimum: 0}
         warnings: {type: array, items: {type: string}}
     ImportPreview:
-      $ref: '#/components/schemas/ImportPreviewFields'
+      $ref: '#/components/schemas/InstanceSourcePreviewFields'
+      unevaluatedProperties: false
+    AdoptionPreview:
+      allOf:
+        - $ref: '#/components/schemas/InstanceSourcePreviewFields'
+        - type: object
+          required: [reservation_id, service_account]
+          properties:
+            server_root: {const: .}
+            reservation_id: {$ref: '#/components/schemas/ID', description: Persisted instance identity bound to the requesting user/path/preview hash.}
+            service_account: {type: string, pattern: '^nec-mc-[a-f0-9]{24}$', description: Dedicated account/group name formed from nec-mc- and the first 24 reservation ID characters.}
       unevaluatedProperties: false
     InstanceImportPreview:
       allOf:
@@ -2376,7 +2449,7 @@ components:
       unevaluatedProperties: false
     ImportPreviewFields:
       type: object
-      description: Shared inspection fields without closing extension for instance conflicts.
+      description: Shared inspection fields; each route defines path relativity and its additional fields.
       required: [preview_hash, files, file_count, total_bytes, warnings, launchers, worlds]
       properties:
         preview_hash: {$ref: '#/components/schemas/SHA256'}
@@ -2386,8 +2459,17 @@ components:
         warnings: {type: array, items: {type: string}}
         launchers: {type: array, items: {type: string}}
         worlds: {type: array, items: {type: string}}
-        minecraft_version: {type: string}
-        loader_version: {type: string}
+    InstanceSourcePreviewFields:
+      allOf:
+        - $ref: '#/components/schemas/ImportPreviewFields'
+        - type: object
+          required: [server_root, minecraft_version, loader_version, java_required]
+          properties:
+            server_root: {$ref: '#/components/schemas/RelativePath', description: Dot or a safe source-relative directory; reported file/world/launcher paths are rebased to this root.}
+            minecraft_version: {type: string, minLength: 1, description: Statically detected source Minecraft version.}
+            loader_version: {type: string, minLength: 1, description: Statically detected source Fabric loader version.}
+            java_required: {type: integer, minimum: 1, description: Maximum of the bootstrap class-file requirement and authoritative upstream runtime Java minimum; not proof of mod compatibility.}
+            launchers: {type: array, minItems: 1, maxItems: 1, items: {$ref: '#/components/schemas/RelativePath'}, description: Exactly one supported bootstrap JAR path relative to server_root.}
     ImportApplyRequest:
       type: object
       additionalProperties: false
@@ -3005,7 +3087,7 @@ components:
       required: [instance]
       properties:
         instance: {$ref: '#/components/schemas/Instance'}
-        state: {type: string, const: offline}
+        state: {type: string, enum: [offline, registered], description: registered is returned when a completed adoption is repeated; no provisioning or start is performed.}
         java_major: {type: integer, minimum: 1}
         warnings:
           oneOf:
