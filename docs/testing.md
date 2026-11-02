@@ -54,6 +54,12 @@ Frontend interaction tests allow five seconds for an asynchronous assertion and
 thirty seconds for a complete multi-step scenario under that CPU quota. These
 are correctness deadlines, not measured browser performance targets.
 
+The deployment ownership regression is skipped for ordinary users. In an isolated
+root container, give it a private root-owned `TMPDIR` with trusted ancestors (for
+example, a 0700 tmpfs mounted at `/fixtures`). The installer deliberately rejects
+world-writable ancestors such as `/tmp`; weakening that validation to accommodate
+a test fixture would invalidate the ownership test.
+
 Use a new temporary data directory, localhost-only test servers and disposable
 instances for all manual checks. Never use a real world, production panel
 database, signing secret or broadly privileged systemd account as a test fixture.

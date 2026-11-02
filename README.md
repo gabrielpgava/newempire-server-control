@@ -116,7 +116,7 @@ The [OpenAPI 3.1 reference](docs/api/openapi.yaml) defines request and response 
 | Development and publishing | [Development](docs/development.md), [testing](docs/testing.md), [releases](docs/releases.md) |
 | Change history | [Changelog](CHANGELOG.md) |
 
-Screenshots are forthcoming from the implemented application; no simulated dashboard or production evidence is presented here.
+Actual implemented UI: [desktop](docs/evidence/ui/desktop-account.png) · [mobile](docs/evidence/ui/mobile-account.png). These are captures of a disposable empty panel served by the embedded Go binary, not mockups or production/Minecraft acceptance. See the [browser evidence and limits](docs/evidence/ui/README.md).
 
 ## Contributing and releases
 
