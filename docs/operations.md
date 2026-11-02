@@ -1,7 +1,9 @@
 # Native operations
 
-Linux/systemd integration is not yet live-host verified. These procedures describe
-the intended deployment, not evidence that release or recovery acceptance passed.
+Signed-release deployment and complete Linux/systemd/Minecraft acceptance remain
+pending. The [evidence ledger](acceptance.md) distinguishes verified development
+fixture checks from unverified workflows; these procedures are not a release or
+production-readiness claim.
 
 ## Boundaries
 

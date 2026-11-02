@@ -77,6 +77,14 @@ instance, accept the Minecraft EULA, or run Java. Fabric's bootstrap downloads
 the Minecraft server and libraries on the first approved launch; this is not a
 fully offline installation or a panel-verified library cache.
 
+Cached server/library files do not eliminate Minecraft's own network needs.
+Official service-discovery and public-key retrieval can be required during
+startup, separately from Fabric/Mojang runtime metadata. A blocked resolver or
+HTTPS destination can therefore prevent readiness even after a valid import.
+Do not disable authentication, secure-profile enforcement or the watchdog merely
+to turn a failed acceptance check into a passing result; diagnose the selected
+server's official network requirements instead.
+
 The job/API owner must compare `StageResult.Plan` against the administrator's
 approved plan hash, inspect the configured Java executable, create and verify an
 appropriate restore point, gracefully stop the instance, verify it is stopped,

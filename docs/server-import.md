@@ -20,12 +20,14 @@ ZIP64 is supported within the same limits. Self-extracting ZIP layouts are not s
 
 `POST /api/v1/imports/preview` takes a completed `upload_id`. It validates and temporarily extracts the archive in private panel staging, then identifies **exactly one supported unattended Fabric bootstrap beside `server.properties`**. Multiple supported launchers, multiple server roots, unverifiable legacy/custom/non-Fabric launchers, and unsafe `level-name` values are rejected. Up to 32 candidate JARs are inspected; `mods`, `libraries`, and `.fabric` directories are not launcher candidates. No uploaded JAR is executed.
 
+Initial import and adoption also fetch current official Fabric/Mojang metadata to verify the detected versions and effective Java requirement. They are **not fully offline**, even when the archive already contains server/library caches. Working DNS and certificate-verified HTTPS to the allowed metadata origins are required; a metadata/network error is not permission to bypass version, TLS or public-address checks. See [Fabric and Java](fabric-and-java.md) for upstream validation and limits.
+
 The initial-instance preview adds:
 
 - `server_root`: `.` for an unwrapped source, or a safe archive-relative directory such as `backup/server`.
 - `launchers`: the supported launcher path **relative to that root**, not to the outer archive.
 - `files`, `worlds`, `file_count`, and `total_bytes`: only the contents of that subtree, with rebased paths.
-- `minecraft_version`, `loader_version`, and `java_required`: the statically inspected runtime and its verified minimum Java major. These are not migration choices.
+- `minecraft_version`, `loader_version`, and `java_required`: statically inspected game/loader identity and the effective Java minimum verified against upstream metadata. These are not migration choices.
 - `preview_hash`: a hash binding the entire inspected source, server root, rebased launcher, detected versions, and required Java major.
 
 `POST /api/v1/instances` with `mode:"import"` must echo `server_root`, `preview_hash`, the rebased `jar`, and the detected Minecraft/Fabric versions, alongside the ordinary name, Java, memory, ports, EULA, and upload fields. Apply re-extracts and revalidates the source and authoritative Java metadata before provisioning. Only the reported subtree is copied into the new instance root. For example, `backup/server/Realm/level.dat` becomes `Realm/level.dat`; the original `level-name=Realm`, whitelist, unknown mods, and ordinary configuration are retained. Files outside the chosen subtree are not installed.

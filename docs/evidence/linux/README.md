@@ -58,3 +58,43 @@ token, password, key material or host-private paths. This proves the real
 stopped-state guard/restart boundary, **not** official release discovery,
 signature verification, application, post-switch rollback or unchanged running
 Minecraft during an update. Those remain separate acceptance gates.
+
+## Real API import and first-launch failure
+
+On the same VM/source, the actual API passed owner bootstrap, authenticated Java
+inspection, upload HEAD/offset resumption, rejection of an incorrect upload
+offset, fresh official metadata preview, explicit EULA rejection/acceptance, and
+the native import/provisioning job. The **66,403,718-byte** ZIP included the
+unchanged official launcher/server/libraries and an explicitly **locally derived
+595-byte manifest-only Fabric cache JAR**. That cache is not an official signed
+runtime asset. Java was **25.0.5**, installed offline from authenticated Debian
+packages; metadata selected Minecraft **26.3** / Fabric Loader **0.20.1**.
+
+The application used its original resolver, netguard and TLS validation. A
+temporary test-only channel admitted only Fabric/Mojang metadata through two
+exact guest hosts mappings, two public `/32` loopback routes, one owned NAT table
+and a bounded SNI/public-address-checked TLS-byte relay. Six independent fresh
+metadata probes as UID 999 passed default CA/hostname verification over TLS 1.3;
+Mojang's selected version SHA-1 was checked. No application HTTP response or
+transport was faked, no CA/key was replaced, QEMU remained restricted and the
+protective firewall was unchanged. This fixture channel is **not a supported
+production network/proxy configuration**.
+
+**The Minecraft start job failed; readiness was not reached.** The actual Java
+server and Fabric executed, but the watchdog fired while the server thread
+waited for Authlib's service/public-key discovery. The discovery thread was
+blocked in DNS for an endpoint outside the metadata-only channel. Logs named
+`https://discovery.minecraftservices.com/minecraft/client`; a separate read-only
+fetch of that official discovery document identified
+`https://api.minecraftservices.com/publickeys`. Authentication, secure-profile
+enforcement and the watchdog were not disabled to force a passing result.
+
+The API truthfully reported the failed start and `ready:false`; fixture cleanup
+left the new instance stopped. The planned RCON/firewall, backup/restore,
+successful restart and panel-update checks were **not reached**, not passed.
+The temporary channel was then removed: owned routes/NAT/listeners/processes
+were deleted and original guest hosts/SSH/network state restored, without
+changing the protective firewall or removing the application's instance guard.
+[Sanitized partial results and exact job IDs](api-first-launch-evidence.json)
+preserve this failure independently of any later retry. No production data or
+valuable world was used.
