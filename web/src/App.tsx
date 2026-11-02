@@ -48,6 +48,7 @@ export function App() {
   const [logoutError, setLogoutError] = useState<unknown>(null)
   const [lastInstanceID, setLastInstanceID] = useState<string>()
   const sidebar = useRef<HTMLElement>(null)
+  const leaveGuard = useRef<(() => Promise<boolean>) | undefined>(undefined)
   const route = parseRoute(hash)
   const user = session.data?.user
   useEffect(() => { if (route.instanceID) setLastInstanceID(route.instanceID) }, [route.instanceID])
@@ -57,6 +58,7 @@ export function App() {
     document.body.style.overflow = 'hidden'
     sidebar.current?.querySelector<HTMLElement>('button.close-menu')?.focus()
     function keyboard(event: KeyboardEvent) {
+      if (document.querySelector('dialog[open]')) return
       if (event.key === 'Escape') { event.preventDefault(); setMenuOpen(false) }
       if (event.key !== 'Tab') return
       const focusable = sidebar.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
@@ -76,16 +78,39 @@ export function App() {
     return () => mobile.removeEventListener('change', changed)
   }, [])
   useEffect(() => {
-    const listener = () => { setHash(window.location.hash); setMenuOpen(false); window.scrollTo({ top: 0 }) }
+    let current = { hash: window.location.hash, index: window.history.state?.panelNavigationIndex ?? 0 }
+    let active = true, pending = false
+    let restored: (() => void) | undefined
+    let approved: typeof current | undefined
+    window.history.replaceState({ ...window.history.state, panelNavigationIndex: current.index }, '')
+    async function listener() {
+      const next = { hash: window.location.hash, index: window.history.state?.panelNavigationIndex ?? current.index + 1 }
+      window.history.replaceState({ ...window.history.state, panelNavigationIndex: next.index }, '')
+      if (next.hash === current.hash && next.index === current.index) { restored?.(); restored = undefined; return }
+      const delta = next.index - current.index
+      if (pending) { window.history.go(-delta); return }
+      if (!leaveGuard.current || (approved?.hash === next.hash && approved.index === next.index)) {
+        approved = undefined; current = next
+        setHash(next.hash); setMenuOpen(false); window.scrollTo({ top: 0 })
+        return
+      }
+      pending = true
+      // Undo the traversal before asking, preserving both the draft and the history destination.
+      await new Promise<void>(resolve => { restored = resolve; window.history.go(-delta) })
+      const allowed = await leaveGuard.current?.() ?? true
+      pending = false
+      if (active && allowed) { approved = next; window.history.go(delta) }
+    }
     window.addEventListener('hashchange', listener)
-    return () => window.removeEventListener('hashchange', listener)
+    return () => { active = false; window.removeEventListener('hashchange', listener) }
   }, [])
   useEffect(() => { setSession(session.data ?? undefined) }, [session.data])
   useEffect(() => {
     const expired = () => { setSession(); client.setQueryData(['/auth/session'], null); client.removeQueries({ predicate: query => !['/setup', '/auth/session'].includes(String(query.queryKey[0])) }) }
     window.addEventListener('session-expired', expired)
+    if (session.error instanceof APIError && session.error.status === 401) expired()
     return () => window.removeEventListener('session-expired', expired)
-  }, [client])
+  }, [client, session.error])
   useEffect(() => {
     if (!user || typeof EventSource === 'undefined') return
     const source = new EventSource(`${API}/events`, { withCredentials: true })
@@ -102,15 +127,16 @@ export function App() {
   }, [route.page, instances.data])
   useEffect(() => { document.title = `${sections.find(section => section.id === route.page)?.label ?? ({ jobs: 'Jobs', settings: 'Settings', updates: 'Application updates', new: 'Add instance' }[route.page] || 'Administration')} · New Empire` }, [route.page])
   async function logout() {
+    if (leaveGuard.current && !await leaveGuard.current()) return
     setLogoutBusy(true); setLogoutError(null)
     try { await request('/auth/logout', { method: 'POST' }); setSession(); client.clear(); window.location.hash = ''; window.location.reload() } catch (cause) { setLogoutError(cause) } finally { setLogoutBusy(false) }
   }
   if (setup.isPending) return <main className="boot-screen"><Loading label="Connecting to your control panel…" /></main>
-  if (setup.isError) return <main className="boot-screen"><h1>Panel connection unavailable</h1><ErrorNotice error={setup.error} retry={() => { void setup.refetch() }} /></main>
+  if (setup.isError && setup.data === undefined) return <main className="boot-screen"><h1>Panel connection unavailable</h1><ErrorNotice error={setup.error} retry={() => { void setup.refetch() }} /></main>
   if (setup.data.required) return <Auth setup />
   if (session.isPending) return <main className="boot-screen"><Loading label="Checking your session…" /></main>
-  if (session.isError && (!(session.error instanceof APIError) || session.error.status !== 401)) return <main className="boot-screen"><h1>Session could not be checked</h1><ErrorNotice error={session.error} retry={() => { void session.refetch() }} /></main>
-  if (!session.data || !user) return <Auth setup={false} />
+  if (session.isError && session.data === undefined && (!(session.error instanceof APIError) || session.error.status !== 401)) return <main className="boot-screen"><h1>Session could not be checked</h1><ErrorNotice error={session.error} retry={() => { void session.refetch() }} /></main>
+  if (!session.data || !user || (session.error instanceof APIError && session.error.status === 401)) return <Auth setup={false} />
   const instance = instances.data?.find(item => item.id === (route.instanceID ?? lastInstanceID)) ?? (!route.instanceID ? instances.data?.[0] : undefined)
   function page() {
     if (route.page === 'jobs') return <Jobs user={user!} instances={instances.data ?? []} id={route.jobID} />
@@ -123,7 +149,7 @@ export function App() {
     switch (route.page) {
       case 'dashboard': return <Dashboard {...props} />
       case 'console': return <Console {...props} />
-      case 'files': return <Files {...props} />
+      case 'files': return <Files {...props} leaveGuard={leaveGuard} />
       case 'worlds': return <Worlds {...props} />
       case 'mods': return <Mods {...props} />
       case 'backups': return <Backups {...props} />
@@ -140,7 +166,7 @@ export function App() {
       <div className="sidebar-foot"><span className={`connection ${live ? 'connected' : ''}`}><span aria-hidden="true" />{live ? 'Live updates connected' : 'Polling available'}</span><small>Isolated instances. Deliberate changes.</small></div>
     </aside>
     <div className="workspace" inert={menuOpen}><header className="topbar"><Button id="navigation-toggle" variant="ghost" className="open-menu" aria-label="Open navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu size={22} /></Button><Server size={18} className="instance-icon" aria-hidden="true" /><label className="instance-selector"><span className="sr-only">Selected instance</span><select value={instance?.id ?? ''} onChange={event => { if (event.target.value) window.location.hash = `#/instances/${event.target.value}/${sections.some(section => section.id === route.page) || route.page === 'settings' ? route.page : 'dashboard'}` }}><option value="" disabled>{instances.data?.length ? 'Select an instance' : 'No instances yet'}</option>{instances.data?.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{canAdmin(user) && <a className="button button-ghost add-instance" href="#/new" aria-label="Add an instance"><Plus size={17} /><span>Add instance</span></a>}<div className="account-menu"><div><strong>{user.username}</strong><small>{user.role}</small></div><Button variant="ghost" aria-label="Sign out" busy={logoutBusy} onClick={() => { void logout() }}><LogOut size={18} /></Button></div></header>
-      <main id="main-content" tabIndex={-1} className="main-content">{!!logoutError && <ErrorNotice error={logoutError} />}{instances.isPending ? <Loading label="Loading your instances…" /> : instances.isError ? <ErrorNotice error={instances.error} retry={() => { void instances.refetch() }} /> : <div key={`${route.instanceID ?? ''}-${route.page}-${route.jobID ?? ''}`}>{page()}</div>}</main>
+      <main id="main-content" tabIndex={-1} className="main-content">{!!logoutError && <ErrorNotice error={logoutError} />}{setup.isError && <ErrorNotice error={setup.error} stale retry={() => { void setup.refetch() }} />}{session.isError && <ErrorNotice error={session.error} stale retry={() => { void session.refetch() }} />}{instances.isError && <ErrorNotice error={instances.error} stale={instances.data !== undefined} retry={() => { void instances.refetch() }} />}{instances.data !== undefined ? <div key={`${route.instanceID ?? ''}-${route.page}-${route.jobID ?? ''}`}>{page()}</div> : instances.isPending ? <Loading label="Loading your instances…" /> : null}</main>
       <footer className="workspace-footer"><span>New Empire Server Control</span><span>Source-available · PolyForm Shield 1.0.0</span></footer>
     </div>
   </div></ConfirmProvider>
