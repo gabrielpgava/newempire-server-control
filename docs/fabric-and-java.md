@@ -105,6 +105,39 @@ legacy `1.x` and modern Java version output. `ChooseJava` chooses the smallest
 working configured major satisfying the metadata minimum. No JAR is run during
 inspection.
 
+## Imported and adopted runtime identity
+
+Initial import/adoption does not trust browser-supplied version labels. `InspectSourceLauncher`
+reads a bounded regular JAR without executing it and supports Fabric's unattended bootstrap
+format: `META-INF/MANIFEST.MF` must select `net.fabricmc.installer.ServerLauncher`,
+`install.properties` must contain valid `game-version` and `fabric-loader-version`, and the
+bootstrap class must have a valid Java class header. This matches the official
+[Fabric installer launcher](https://github.com/FabricMC/fabric-installer/blob/master/src/main/java/net/fabricmc/installer/ServerLauncher.java).
+Its paths are relative to the process working directory, so a wrapped archive must be
+rebased to its actual server root before registration; pointing `-jar` into the wrapper
+does not select that wrapper's world or properties.
+
+Source inspection uses the existing 64 MiB compressed JAR, 10,000-entry, 256 MiB expanded,
+safe-path, duplicate-entry, and CRC bounds. Embedded properties are limited to 32 KiB.
+Legacy installed launchers, custom launchers, and non-Fabric launchers without this
+verifiable structure fail closed. They are not silently converted or labelled Fabric.
+Supply a supported launcher through a separate reviewed offline migration; preserve the
+original world and take a verified backup first.
+
+Both import and adoption resolve the detected game/loader through official Fabric and
+hash-verified Mojang metadata, then inspect the selected allowlisted Java executable.
+The effective minimum is the maximum of Mojang's requirement, Fabric's declared loader
+minimum, and the bootstrap class's Java requirement. Source/runtime mismatches and
+insufficient Java fail before service provisioning. The initial preview reports
+`minecraft_version`, `loader_version`, and `java_required`; apply rechecks those facts
+and the exact preview hash. A changed authoritative minimum requires reinspection.
+
+Static metadata inspection proves consistency of supported launchers, **not their origin
+or safety**. Uploaded/adopted code is still administrator-supplied code. No untrusted JAR
+is executed during inspection, and neither a successful parse nor a Java minimum proves
+mod compatibility. See [source roots and adoption reservations](server-import.md) for
+the request fields and stable dedicated-account preparation/retry flow.
+
 ## Properties and adoption
 
 `ReadProperties` parses bounded UTF-8 Java properties, including escaped keys,

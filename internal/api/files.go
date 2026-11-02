@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -325,14 +326,20 @@ type importRequest struct {
 	Owner       string `json:"owner,omitempty"`
 }
 type importPreview struct {
-	PreviewHash string           `json:"preview_hash"`
-	Files       []importer.Entry `json:"files"`
-	FileCount   int              `json:"file_count"`
-	TotalBytes  int64            `json:"total_bytes"`
-	Warnings    []string         `json:"warnings"`
-	Launchers   []string         `json:"launchers"`
-	Worlds      []string         `json:"worlds"`
-	Conflicts   []string         `json:"conflicts,omitempty"`
+	PreviewHash      string           `json:"preview_hash"`
+	Files            []importer.Entry `json:"files"`
+	FileCount        int              `json:"file_count"`
+	TotalBytes       int64            `json:"total_bytes"`
+	Warnings         []string         `json:"warnings"`
+	Launchers        []string         `json:"launchers"`
+	Worlds           []string         `json:"worlds"`
+	Conflicts        []string         `json:"conflicts,omitempty"`
+	ServerRoot       string           `json:"server_root,omitempty"`
+	MinecraftVersion string           `json:"minecraft_version,omitempty"`
+	LoaderVersion    string           `json:"loader_version,omitempty"`
+	JavaRequired     int              `json:"java_required,omitempty"`
+	ReservationID    string           `json:"reservation_id,omitempty"`
+	ServiceAccount   string           `json:"service_account,omitempty"`
 }
 
 func describePreview(p importer.Preview) importPreview {
@@ -386,12 +393,143 @@ func (a *App) previewUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	p, err := a.inspectUpload(r.Context(), session(r).User.ID, body.UploadID)
+	owner := session(r).User.ID
+	p, err := a.inspectUpload(r.Context(), owner, body.UploadID)
 	if err != nil {
 		fail(w, 400, err)
 		return
 	}
-	respond(w, 200, describePreview(p))
+	parent, err := os.OpenRoot(filepath.Join(a.Config.DataDir, "staging"))
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	defer parent.Close()
+	name := "source-preview-" + model.NewID()
+	if err := parent.Mkdir(name, 0700); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	defer parent.RemoveAll(name)
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	defer root.Close()
+	if err := ensureSpace(root, p.Bytes); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	extracted, err := a.extractUpload(r.Context(), owner, body.UploadID, root)
+	if err != nil || extracted.Hash != p.Hash {
+		fail(w, 400, errors.New("upload changed or could not be safely extracted; inspect it again"))
+		return
+	}
+	preview, err := a.instanceSourcePreview(r.Context(), root, p.Entries, p.Hash)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	respond(w, 200, preview)
+}
+
+// Initial instance imports choose a server subtree; ordinary file imports keep archive-relative paths.
+func (a *App) instanceSourcePreview(ctx context.Context, root *os.Root, entries []importer.Entry, sourceHash string) (importPreview, error) {
+	var selected, serverRoot string
+	var source fabric.SourceRuntime
+	names := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if !e.Directory {
+			names[e.Path] = true
+		}
+	}
+	candidates := 0
+	for _, e := range entries {
+		if e.Directory || !strings.HasSuffix(e.Path, ".jar") || !names[path.Join(path.Dir(e.Path), "server.properties")] {
+			continue
+		}
+		content := false
+		for _, part := range strings.Split(e.Path, "/") {
+			if part == "mods" || part == "libraries" || part == ".fabric" {
+				content = true
+			}
+		}
+		if content {
+			continue
+		}
+		candidates++
+		if candidates > 32 {
+			return importPreview{}, errors.New("too many source launcher candidates; supply one server directory")
+		}
+		f, err := files.OpenRegular(root, e.Path)
+		if err != nil {
+			return importPreview{}, err
+		}
+		inspected, inspectErr := fabric.InspectSourceLauncher(ctx, f)
+		closeErr := f.Close()
+		if err := ctx.Err(); err != nil {
+			return importPreview{}, err
+		}
+		if closeErr != nil {
+			return importPreview{}, closeErr
+		}
+		if inspectErr != nil {
+			continue
+		}
+		if selected != "" {
+			return importPreview{}, errors.New("source has multiple supported Fabric launchers or server roots; supply exactly one server directory")
+		}
+		selected, serverRoot, source = e.Path, path.Dir(e.Path), inspected
+	}
+	if selected == "" {
+		return importPreview{}, errors.New("source must contain one supported unattended Fabric bootstrap beside server.properties; legacy, custom, and non-Fabric launchers cannot be verified")
+	}
+	selection, err := a.selection(ctx, source.MinecraftVersion, source.LoaderVersion, "")
+	if err != nil {
+		return importPreview{}, err
+	}
+	plan, err := a.Fabric.Plan(ctx, selection)
+	if err != nil {
+		return importPreview{}, err
+	}
+	properties, err := files.ReadText(ctx, root, path.Join(serverRoot, "server.properties"), 1<<20)
+	if err != nil {
+		return importPreview{}, err
+	}
+	values, err := fabric.ReadProperties([]byte(properties))
+	if err != nil {
+		return importPreview{}, err
+	}
+	if level, ok := values["level-name"]; ok {
+		if err := fabric.ValidateProperty("level-name", level); err != nil {
+			return importPreview{}, err
+		}
+	}
+	preview := importer.Preview{Entries: []importer.Entry{}}
+	for _, e := range entries {
+		if serverRoot != "." {
+			if !strings.HasPrefix(e.Path, serverRoot+"/") {
+				continue
+			}
+			e.Path = strings.TrimPrefix(e.Path, serverRoot+"/")
+		}
+		preview.Entries = append(preview.Entries, e)
+		if !e.Directory {
+			preview.Files++
+			preview.Bytes += e.Size
+		}
+	}
+	out := describePreview(preview)
+	out.ServerRoot, out.MinecraftVersion, out.LoaderVersion = serverRoot, source.MinecraftVersion, source.LoaderVersion
+	out.JavaRequired = max(plan.JavaMajor, source.JavaMajor)
+	out.Launchers = []string{path.Base(selected)}
+	out.PreviewHash = etagJSON(struct {
+		Source, Root, Launcher, Game, Loader string
+		Java                                 int
+	}{sourceHash, serverRoot, out.Launchers[0], source.MinecraftVersion, source.LoaderVersion, out.JavaRequired})
+	out.Warnings = append(out.Warnings, "Only the reported server root is installed. Launcher metadata is checked statically, not authenticated; import only code you trust. The Java minimum is not proof of mod compatibility.")
+	return out, nil
 }
 
 func treeManifest(ctx context.Context, root *os.Root, id string) (backups.Manifest, error) {
@@ -438,10 +576,15 @@ func manifestHash(m backups.Manifest) string {
 }
 func (a *App) previewAdoption(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Path string `json:"path"`
+		Path          string `json:"path"`
+		ReservationID string `json:"reservation_id,omitempty"`
 	}
 	if err := decode(r, &body); err != nil {
 		fail(w, 400, err)
+		return
+	}
+	if !filepath.IsAbs(body.Path) || filepath.Clean(body.Path) != body.Path {
+		fail(w, 400, errors.New("adoption requires the exact canonical absolute server directory"))
 		return
 	}
 	root, err := a.Instances.OpenRoot(body.Path)
@@ -455,7 +598,21 @@ func (a *App) previewAdoption(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	p := describePreview(importer.Preview{Hash: manifestHash(m), Entries: m.Entries, Bytes: m.Bytes, Files: len(m.Entries)})
+	p, err := a.instanceSourcePreview(r.Context(), root, m.Entries, manifestHash(m))
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	if p.ServerRoot != "." {
+		fail(w, 400, errors.New("select the actual server directory for adoption, not a wrapper directory"))
+		return
+	}
+	p.ReservationID, err = a.reserveAdoption(r.Context(), session(r).User.ID, body.Path, p.PreviewHash, body.ReservationID)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	p.ServiceAccount = "nec-mc-" + p.ReservationID[:24]
 	p.Warnings = append(p.Warnings, "Adoption preserves files and ownership. The existing server must be stopped, EULA accepted, and RCON configured; service permissions are checked before registration.")
 	respond(w, 200, p)
 }
