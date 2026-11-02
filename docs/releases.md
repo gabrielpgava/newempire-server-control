@@ -201,7 +201,7 @@ reviewed updates, not automatic publication or permission changes.
 | actions/download-artifact | v8.0.2 | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
 | actions/attest | v4.2.2 | `1e69f48acb82d1966a394da916b4c1698aa569d6` |
 
-`govulncheck` is pinned to `golang.org/x/vuln/cmd/govulncheck@v1.1.4`;
+`govulncheck` is pinned to `golang.org/x/vuln/cmd/govulncheck@v1.9.0`;
 workflow validation uses `github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`;
 the OpenAPI validator is `@redocly/cli@2.72.1`. npm's production audit and the Go
 vulnerability database require network access. Source/toolchain consistency,

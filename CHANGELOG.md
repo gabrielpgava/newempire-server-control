@@ -27,6 +27,7 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Preserve local editor drafts through failed refreshes and require confirmation across navigation, instance changes, sign-out and supported browser unloads.
 - Preserve notification deadline errors when a socket timeout precedes context-timer publication, without exposing SMTP diagnostics or changing active-context retry rules.
 - Preserve panel-update postponements during ordinary/concurrent policy edits, and display refreshed server deadlines instead of stale action responses.
+- Use pinned Go 1.27-compatible vulnerability tooling without disabling symbol/callgraph analysis after the initial Linux CI scanner crash.
 - Block conflicting edits while content readiness/recovery is pending, reject duplicate mod adoption, and preserve unmanaged mods during automatic-safe maintenance.
 - Redact known RCON credentials from console/player job output and errors.
 - Include older conventional commit subjects in release planning even when the newest commit is documentation or a smaller repair.

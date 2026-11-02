@@ -1,0 +1,30 @@
+{
+  "source_commit": "255dcc7de0c16104ec91f7888c8d59418c4245a2",
+  "scope": "Real embedded panel/API, disposable state, no HTTP mocks or Minecraft instance",
+  "captures": [
+    {
+      "file": "desktop-updates.png",
+      "width": 1280,
+      "height": 800,
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "axe_violations": [],
+      "sha256": "3f6cacec6e16b6121c2f8741973fb47d67465ef603d603eecd63469777dafb3d"
+    },
+    {
+      "file": "mobile-updates.png",
+      "width": 390,
+      "height": 844,
+      "documentWidth": 390,
+      "clientWidth": 390,
+      "axe_violations": [],
+      "sha256": "f03b7b40ad6455c99557defbc5252e4323f27a8e6cb2892fcbd6d7048dc93d79"
+    }
+  ],
+  "assertions": [
+    "UI policy save omitted postpone_until and the real API preserved its existing deadline",
+    "Background server refresh replaced and then cleared the deadline without retaining a stale action result",
+    "Desktop/mobile captures had no horizontal overflow, uncaught page errors or captured axe A/AA findings"
+  ],
+  "browser": "156.0.8078.74"
+}
