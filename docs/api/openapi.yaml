@@ -2564,7 +2564,7 @@ components:
       additionalProperties: false
       required: [key, size, sha256, verification]
       properties:
-        key: {type: string, description: Recorded remote object key, not a provider credential or host path.}
+        key: {type: string, description: 'Recorded remote object key, not a provider credential or host path.'}
         size: {type: integer, format: int64, minimum: 0}
         sha256: {$ref: '#/components/schemas/SHA256'}
         verification: {type: string, description: Exact provider verification evidence; not a universal restore guarantee.}
