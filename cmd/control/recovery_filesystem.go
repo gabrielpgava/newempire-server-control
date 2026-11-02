@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -133,9 +134,20 @@ func filesystemRecords(parent *os.Root, target string) ([]filesystemRecord, erro
 	return records, nil
 }
 
-func (p *offlinePanel) originalBackup(ctx context.Context, instanceID, recoveryID string) (string, error) {
+func (p *offlinePanel) originalBackup(ctx context.Context, i model.Instance, record filesystemRecord, pending *pendingRestore) (string, error) {
+	if record.Target != filepath.Base(i.Root) {
+		return "", errors.New("filesystem recovery journal belongs to a different instance target")
+	}
+	if pending != nil {
+		if pending.Stage == "" || record.Stage != pending.Stage ||
+			pending.Restore.Recovery != "" && pending.Restore.Recovery != record.Recovery ||
+			pending.Restore.Journal != "" && pending.Restore.Journal != record.Journal {
+			return "", errors.New("filesystem recovery journal does not match the trusted pending restore; no recovery source was selected")
+		}
+		return pending.BeforeID, nil
+	}
 	var raw string
-	err := p.app.DB.QueryRowContext(ctx, "SELECT result FROM jobs WHERE instance_id=? AND kind IN ('restore','recovery_filesystem') AND json_valid(result) AND json_extract(result,'$.restore.recovery')=? ORDER BY created_at DESC,rowid DESC LIMIT 1", instanceID, recoveryID).Scan(&raw)
+	err := p.app.DB.QueryRowContext(ctx, "SELECT result FROM jobs WHERE instance_id=? AND kind IN ('restore','recovery_filesystem') AND json_valid(result) AND json_extract(result,'$.restore.recovery')=? ORDER BY created_at DESC,rowid DESC LIMIT 1", i.ID, record.Recovery).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", errors.New("retained directory has no completed portable recovery record; preserve it and explicitly restore a verified local backup instead")
@@ -178,7 +190,7 @@ func (p *offlinePanel) recoveryRecords(ctx context.Context, i model.Instance) ([
 		all = append(all, map[string]any{"kind": "restore", "pending": pending, "world_data": "metadata reconciliation never swaps worlds"})
 	}
 	for _, record := range retained {
-		id, err := p.originalBackup(ctx, i.ID, record.Recovery)
+		id, err := p.originalBackup(ctx, i, record, pending)
 		entry := map[string]any{"kind": "filesystem", "id": record.Recovery, "journal": record.Journal, "original_backup_id": id}
 		if err != nil {
 			entry["blocked"] = err.Error()
@@ -252,7 +264,8 @@ func (p *offlinePanel) recoverFilesystemJob(ctx context.Context, t *jobs.Task, r
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requireRestoreSettled(ctx, i.ID); err != nil {
+	pending, err := p.pendingRestore(ctx, i.ID)
+	if err != nil {
 		return nil, err
 	}
 	parent, target, err := safeInstanceParent(p.app.Config, i)
@@ -260,18 +273,32 @@ func (p *offlinePanel) recoverFilesystemJob(ctx context.Context, t *jobs.Task, r
 		return nil, err
 	}
 	defer parent.Close()
+	if pending != nil {
+		if _, err := parent.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.New("a current tree exists under the pending restore guard; preview recover restore or restore-previous and reconcile its verified identity before filesystem recovery")
+		}
+	}
 	records, err := filesystemRecords(parent, target)
 	if err != nil {
 		return nil, err
 	}
+	var record filesystemRecord
 	found := false
-	for _, record := range records {
-		found = found || record.Recovery == body.ID
+	for _, candidate := range records {
+		if candidate.Recovery == body.ID {
+			if found {
+				return nil, errors.New("multiple journals claim this retained recovery tree; preserve the records for administrator review")
+			}
+			record, found = candidate, true
+		}
 	}
 	if !found {
 		return nil, errors.New("retained filesystem recovery record not found for this instance")
 	}
-	id, err := p.originalBackup(ctx, i.ID, body.ID)
+	id, err := p.originalBackup(ctx, i, record, pending)
 	if err != nil {
 		return nil, err
 	}
@@ -284,14 +311,28 @@ func (p *offlinePanel) recoverFilesystemJob(ctx context.Context, t *jobs.Task, r
 	if err != nil {
 		return nil, err
 	}
-	previous, err := p.app.BackupInstance(ctx, storage, id, i)
+	var previous model.Instance
+	if pending != nil {
+		previous, err = p.app.BackupInstanceForRecovery(ctx, storage, id, i)
+	} else {
+		previous, err = p.app.BackupInstance(ctx, storage, id, i)
+	}
 	if err != nil {
 		return nil, err
 	}
 	currentJSON, _ := json.Marshal(i)
 	previousJSON, _ := json.Marshal(previous)
-	if string(currentJSON) != string(previousJSON) {
+	if pending == nil && string(currentJSON) != string(previousJSON) {
 		return nil, fmt.Errorf("retained tree needs different instance configuration; explicitly restore verified backup %s so runtime/helper configuration is restored together", id)
+	}
+	if pending != nil {
+		trustedJSON, err := json.Marshal(pending.Previous)
+		if err != nil || string(trustedJSON) != string(previousJSON) {
+			return nil, errors.New("portable pre-restore metadata differs from the trusted pending previous identity; no tree was changed")
+		}
+		if _, err := backups.Verify(ctx, storage, pending.BackupID, nil); err != nil {
+			return nil, fmt.Errorf("the pending restored snapshot must remain verified as a restore point: %w", err)
+		}
 	}
 	if err := p.app.AssertStopped(ctx, i); err != nil {
 		return nil, err
@@ -315,11 +356,27 @@ func (p *offlinePanel) recoverFilesystemJob(ctx context.Context, t *jobs.Task, r
 	if err := files.WriteText(ctx, storage, retainedBackup.ID+".instance.json", string(previousJSON), 1<<20); err != nil {
 		return nil, err
 	}
+	if pending != nil {
+		if err := p.app.AssertStopped(ctx, i); err != nil {
+			return nil, err
+		}
+		if _, err := parent.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+			if err != nil {
+				return nil, fmt.Errorf("cannot prove the recovery target is still absent: %w", err)
+			}
+			return nil, errors.New("the instance target appeared during recovery preflight; no tree was changed")
+		}
+		if err := t.CommitBarrier(ctx); err != nil {
+			return nil, err
+		}
+		recovered, err := backups.Recover(ctx, parent, target, body.ID)
+		return map[string]any{"restore": recovered, "pre_restore_backup_id": pending.BeforeID, "verified_recovery_backup_id": retainedBackup.ID, "state": "offline", "note": "The original pending restore and both snapshots remain retained. Run recover --confirm restore-previous INSTANCE_ID to reconcile metadata/helper identity before starting Minecraft."}, err
+	}
 	before, err := p.app.RecoveryBackup(ctx, t, i, "Before explicit retained filesystem recovery "+body.ID)
 	if err != nil {
 		return nil, err
 	}
-	pending := pendingRestore{BackupID: retainedBackup.ID, BeforeID: before.ID, Previous: i, Restored: previous, Stage: body.ID}
+	pending = &pendingRestore{BackupID: retainedBackup.ID, BeforeID: before.ID, Previous: i, Restored: previous, Stage: body.ID}
 	pendingJSON, err := json.Marshal(pending)
 	if err != nil {
 		return nil, err
@@ -336,8 +393,5 @@ func (p *offlinePanel) recoverFilesystemJob(ctx context.Context, t *jobs.Task, r
 	if err == nil {
 		_, err = p.app.DB.ExecContext(ctx, "UPDATE settings SET value=? WHERE key=?", string(pendingJSON), "restore-pending:"+i.ID)
 	}
-	if recoverErr == nil && err == nil && recovered.Installed {
-		_, err = p.app.DB.ExecContext(ctx, "DELETE FROM settings WHERE key=?", "restore-pending:"+i.ID)
-	}
-	return map[string]any{"restore": recovered, "pre_recovery_backup_id": before.ID, "verified_recovery_backup_id": retainedBackup.ID, "state": "offline", "note": "The displaced tree, swap journal, and both verified snapshots are retained. Minecraft was not started. Any remaining restore-pending guard requires explicit metadata reconciliation."}, errors.Join(recoverErr, err)
+	return map[string]any{"restore": recovered, "pre_recovery_backup_id": before.ID, "verified_recovery_backup_id": retainedBackup.ID, "state": "offline", "note": "The displaced tree, swap journal, and both verified snapshots are retained. Run recover --confirm restore INSTANCE_ID to reconcile metadata/helper identity before starting Minecraft."}, errors.Join(recoverErr, err)
 }

@@ -347,6 +347,9 @@ func TestCLITOTPLoginAndProtectedSessionFiles(t *testing.T) {
 				err = os.Link(outside, path)
 			case "permissions":
 				err = os.WriteFile(path, []byte(`{}`), 0644)
+				if err == nil {
+					err = os.Chmod(path, 0644)
+				}
 			case "oversized":
 				err = os.WriteFile(path, []byte(strings.Repeat("x", 4097)), 0600)
 			case "fifo":
@@ -477,6 +480,12 @@ func TestOfflineBackupRestoreAndRetainedRecoveryWithoutHTTP(t *testing.T) {
 	}
 	if recoveryText(t, filepath.Join(c.InstanceDir, recovery.Restore.Recovery, "world", "level.dat")) != "original-world" {
 		t.Fatal("recovery discarded displaced data")
+	}
+	if pending, err := p.pendingRestore(t.Context(), i.ID); err != nil || pending == nil {
+		t.Fatal("filesystem recovery cleared the metadata guard without reconciliation", err)
+	}
+	if _, err := p.recoverInstance(t.Context(), []string{"restore", i.ID}, true); err != nil {
+		t.Fatal(err)
 	}
 	queued, err := p.app.Jobs.Get(t.Context(), unrelated.ID)
 	if err != nil || queued.State != "queued" || rt.starts != 0 {
@@ -814,7 +823,7 @@ func TestOfflineFilesystemSwapKeepsGuardIfCompletionCannotPersist(t *testing.T) 
 	if err := json.Unmarshal(restored.(jobs.Job).Result, &result); err != nil || !result.Restore.Installed {
 		t.Fatal("missing retained restore result", err)
 	}
-	if _, err := p.app.DB.Exec("CREATE TRIGGER retain_pending_guard BEFORE DELETE ON settings WHEN OLD.key='restore-pending:" + i.ID + "' BEGIN SELECT RAISE(ABORT,'controlled completion persistence failure'); END"); err != nil {
+	if _, err := p.app.DB.Exec("CREATE TRIGGER retain_pending_guard BEFORE UPDATE ON settings WHEN OLD.key='restore-pending:" + i.ID + "' BEGIN SELECT RAISE(ABORT,'controlled completion persistence failure'); END"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.recoverInstance(t.Context(), []string{"filesystem", i.ID, result.Restore.Recovery}, true); err == nil {
@@ -823,7 +832,7 @@ func TestOfflineFilesystemSwapKeepsGuardIfCompletionCannotPersist(t *testing.T) 
 	if recoveryText(t, world) != "valuable-newer-world" {
 		t.Fatal("already installed recovery tree was rolled back automatically")
 	}
-	if pending, err := p.pendingRestore(t.Context(), i.ID); err != nil || pending == nil || !pending.Restore.Installed {
+	if pending, err := p.pendingRestore(t.Context(), i.ID); err != nil || pending == nil {
 		t.Fatal("ambiguous completion lost its startup guard", err)
 	}
 	if _, err := p.app.DB.Exec("DROP TRIGGER retain_pending_guard"); err != nil {
@@ -837,6 +846,315 @@ func TestOfflineFilesystemSwapKeepsGuardIfCompletionCannotPersist(t *testing.T) 
 	}
 	if recoveryText(t, world) != "valuable-newer-world" {
 		t.Fatal("metadata-only reconciliation changed world progress")
+	}
+}
+
+func missingRestoreTargetFixture(t *testing.T) (*offlinePanel, *recoveryRuntime, model.Instance, pendingRestore, filesystemRecord) {
+	t.Helper()
+	c, i := recoveryFixture(t)
+	p, rt := openRecoveryFixture(t, c)
+	i.Adopted = true
+	if err := p.app.Instances.Update(t.Context(), i); err != nil {
+		t.Fatal(err)
+	}
+	created, err := p.backup(t.Context(), []string{"create", i.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := recoveryBackupID(t, created)
+	i.MemoryMB = 2048
+	if err := p.app.Instances.Update(t.Context(), i); err != nil {
+		t.Fatal(err)
+	}
+	putRecoveryFile(t, filepath.Join(i.Root, "world", "level.dat"), "valuable-newer-world")
+	p.app.Provision = func(context.Context, model.Instance, bool) error { return errors.New("controlled interrupted restore") }
+	restored, err := p.backup(t.Context(), []string{"restore", i.ID, id}, true)
+	if err == nil {
+		t.Fatal("restore did not reach the controlled post-swap failure")
+	}
+	pending, err := p.pendingRestore(t.Context(), i.ID)
+	if err != nil || pending == nil || !pending.Restore.Installed {
+		t.Fatal("actual restore did not persist its recovery plan", err)
+	}
+	parent, target, err := safeInstanceParent(c, i)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	records, err := filesystemRecords(parent, target)
+	if err != nil || len(records) != 1 {
+		t.Fatal("actual restore did not retain its swap journal", err)
+	}
+	// Recreate the original-renamed barrier using the real restore's stage, journal, and snapshots.
+	if err := parent.Rename(target, pending.Stage); err != nil {
+		t.Fatal(err)
+	}
+	pending.Restore = backups.RestoreResult{}
+	b, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.app.DB.Exec("UPDATE settings SET value=? WHERE key=?", string(b), "restore-pending:"+i.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.app.DB.Exec("UPDATE jobs SET state='interrupted',result='{}' WHERE id=?", restored.(jobs.Job).ID); err != nil {
+		t.Fatal(err)
+	}
+	p.app.Prepare = func(context.Context, model.Instance) error {
+		return errors.New("do not re-prepare or chown an adopted retained tree")
+	}
+	p.app.Provision = func(context.Context, model.Instance, bool) error { return nil }
+	return p, rt, i, *pending, records[0]
+}
+
+func TestOfflinePendingMissingTargetRecoveryRequiresPreviousMetadataReconciliation(t *testing.T) {
+	if unprivilegedRecoveryTest(t) {
+		return
+	}
+	p, rt, previous, pending, record := missingRestoreTargetFixture(t)
+	ctx := t.Context()
+	current := previous
+	current.MemoryMB = 1024
+	// Model metadata committed before its acknowledgement; the absent target cannot pass normal Update.
+	if _, err := p.app.DB.ExecContext(ctx, "UPDATE instances SET data=json_set(data,'$.memory_mb',?) WHERE id=?", current.MemoryMB, current.ID); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := p.originalBackup(ctx, current, record, &pending); err != nil || id != pending.BeforeID {
+		t.Fatal("pending plan/journal did not recover the backlink without a job result", err)
+	}
+	listed, err := p.recoverInstance(ctx, []string{"list", current.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range listed.([]map[string]any) {
+		if entry["kind"] == "filesystem" && entry["id"] == record.Recovery {
+			found = entry["original_backup_id"] == pending.BeforeID && entry["blocked"] == nil
+		}
+	}
+	if !found {
+		t.Fatal("missing-target recovery was not discoverable from the pending plan")
+	}
+	if _, err := p.recoverInstance(ctx, []string{"filesystem", current.ID, record.Recovery}, false); err == nil {
+		t.Fatal("missing-target recovery accepted no confirmation")
+	}
+	if _, err := p.recoverInstance(ctx, []string{"restore-previous", current.ID}, true); err == nil {
+		t.Fatal("reconciliation accepted a missing current tree")
+	}
+	retainedWorld := filepath.Join(filepath.Dir(current.Root), record.Recovery, "world", "level.dat")
+	before, err := os.Stat(retainedWorld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalPlan string
+	if err := p.app.DB.QueryRow("SELECT value FROM settings WHERE key=?", "restore-pending:"+current.ID).Scan(&originalPlan); err != nil {
+		t.Fatal(err)
+	}
+	configured := []model.Instance{}
+	p.app.Provision = func(_ context.Context, i model.Instance, _ bool) error {
+		configured = append(configured, i)
+		return nil
+	}
+	if _, err := p.recoverInstance(ctx, []string{"filesystem", current.ID, record.Recovery}, true); err != nil {
+		t.Fatal(err)
+	}
+	world := filepath.Join(current.Root, "world", "level.dat")
+	if recoveryText(t, world) != "valuable-newer-world" || len(configured) != 0 {
+		t.Fatal("filesystem recovery changed runtime metadata or failed to recover the retained world")
+	}
+	after, err := os.Stat(world)
+	if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || before.Sys().(*syscall.Stat_t).Uid != after.Sys().(*syscall.Stat_t).Uid || before.Sys().(*syscall.Stat_t).Gid != after.Sys().(*syscall.Stat_t).Gid {
+		t.Fatal("adopted recovery data was copied or its ownership/permissions changed", err)
+	}
+	var retainedPlan string
+	if err := p.app.DB.QueryRow("SELECT value FROM settings WHERE key=?", "restore-pending:"+current.ID).Scan(&retainedPlan); err != nil || retainedPlan != originalPlan {
+		t.Fatal("filesystem recovery changed or cleared the original pending plan", err)
+	}
+	if _, err := p.runJob(ctx, current.ID, "start", map[string]any{}); err == nil || rt.starts != 0 {
+		t.Fatal("filesystem completion bypassed the startup guard")
+	}
+	if _, err := p.recoverInstance(ctx, []string{"restore", current.ID}, true); err == nil {
+		t.Fatal("restored-snapshot metadata was accepted against the recovered previous tree")
+	}
+	if _, err := p.recoverInstance(ctx, []string{"restore-previous", current.ID}, true); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := p.app.Instances.Get(ctx, current.ID)
+	if err != nil || registered.MemoryMB != previous.MemoryMB || len(configured) != 1 || configured[0].MemoryMB != previous.MemoryMB || !configured[0].Adopted {
+		t.Fatal("previous tree was not paired with its verified helper/database identity", err)
+	}
+	if active, err := p.pendingRestore(ctx, current.ID); err != nil || active != nil || recoveryText(t, world) != "valuable-newer-world" {
+		t.Fatal("metadata-only reconciliation changed the world or retained the guard", err)
+	}
+	storage, err := p.backupRoot(current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	for _, id := range []string{pending.BackupID, pending.BeforeID} {
+		if _, err := backups.Verify(ctx, storage, id, nil); err != nil {
+			t.Fatal("an original restore point was lost", err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(current.Root), record.Journal)); err != nil {
+		t.Fatal("the original swap journal was removed", err)
+	}
+}
+
+func TestOfflinePendingMissingTargetRecoveryRejectsUntrustedSources(t *testing.T) {
+	if unprivilegedRecoveryTest(t) {
+		return
+	}
+	for _, failure := range []string{"source-corruption", "metadata-identity", "metadata-policy", "pending-previous", "unrelated-stage", "unrelated-target", "recorded-recovery", "recorded-journal", "restored-snapshot", "running", "current-tree"} {
+		t.Run(failure, func(t *testing.T) {
+			p, rt, i, pending, record := missingRestoreTargetFixture(t)
+			source := record.Recovery
+			parent, target, err := safeInstanceParent(p.app.Config, i)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			switch failure {
+			case "source-corruption":
+				putRecoveryFile(t, filepath.Join(filepath.Dir(i.Root), source, "world", "level.dat"), "untrusted-world")
+			case "metadata-identity", "metadata-policy":
+				metadata := pending.Previous
+				if failure == "metadata-identity" {
+					metadata.Port++
+				} else {
+					metadata.EULA = false
+				}
+				b, err := json.Marshal(metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+				putRecoveryFile(t, filepath.Join(p.app.Config.BackupDir, i.ID, pending.BeforeID+".instance.json"), string(b))
+			case "pending-previous":
+				pending.Previous.MemoryMB = 4096
+			case "unrelated-stage", "unrelated-target":
+				storage, err := p.backupRoot(i.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stage, err := backups.StageRestore(t.Context(), storage, pending.BeforeID, parent, nil)
+				storage.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				source = ".nesc-recovery-" + model.NewID()
+				if err := parent.Rename(stage.Name, source); err != nil {
+					t.Fatal(err)
+				}
+				unrelated := filesystemRecord{Target: target, Stage: stage.Name, Recovery: source}
+				if failure == "unrelated-target" {
+					unrelated.Target = "unrelated-instance"
+				}
+				b, err := json.Marshal(unrelated)
+				if err != nil {
+					t.Fatal(err)
+				}
+				putRecoveryFile(t, filepath.Join(filepath.Dir(i.Root), ".nesc-transaction-"+model.NewID()+".json"), string(b))
+			case "recorded-recovery":
+				pending.Restore.Recovery = ".nesc-recovery-" + model.NewID()
+			case "recorded-journal":
+				pending.Restore.Journal = ".nesc-transaction-" + model.NewID() + ".json"
+			case "restored-snapshot":
+				putRecoveryFile(t, filepath.Join(p.app.Config.BackupDir, i.ID, pending.BackupID+".zip"), "corrupt archive")
+			case "running":
+				rt.running = true
+			case "current-tree":
+				if err := parent.Rename(pending.Stage, target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			b, err := json.Marshal(pending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.app.DB.Exec("UPDATE settings SET value=? WHERE key=?", string(b), "restore-pending:"+i.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.recoverInstance(t.Context(), []string{"filesystem", i.ID, source}, true); err == nil {
+				t.Fatal("untrusted or unsafe pending recovery was accepted")
+			}
+			if failure == "current-tree" {
+				if recoveryText(t, filepath.Join(i.Root, "world", "level.dat")) != "original-world" {
+					t.Fatal("refused recovery changed the current tree")
+				}
+			} else if _, err := parent.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("refused recovery installed an untrusted tree", err)
+			}
+			if active, err := p.pendingRestore(t.Context(), i.ID); err != nil || active == nil {
+				t.Fatal("refused recovery cleared its startup guard", err)
+			}
+			if _, err := parent.Lstat(record.Recovery); err != nil {
+				t.Fatal("refused recovery lost the original retained source", err)
+			}
+		})
+	}
+}
+
+func TestOfflineRuntimeRecoveryPreservesWorldAndInspectionBackup(t *testing.T) {
+	if unprivilegedRecoveryTest(t) {
+		return
+	}
+	c, previous := recoveryFixture(t)
+	p, rt := openRecoveryFixture(t, c)
+	created, err := p.backup(t.Context(), []string{"create", previous.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := recoveryBackupID(t, created)
+	directory := "runtime-recovery-" + model.NewID()
+	launcher := recoveryText(t, filepath.Join(previous.Root, previous.Jar))
+	properties := recoveryText(t, filepath.Join(previous.Root, "server.properties"))
+	putRecoveryFile(t, filepath.Join(c.DataDir, "staging", directory, "launcher.jar"), launcher)
+	putRecoveryFile(t, filepath.Join(c.DataDir, "staging", directory, "server.properties"), properties)
+	current := previous
+	current.MinecraftVersion = "newer-fixture"
+	if err := p.app.Instances.Update(t.Context(), current); err != nil {
+		t.Fatal(err)
+	}
+	putRecoveryFile(t, filepath.Join(current.Root, current.Jar), "mixed-new-runtime")
+	putRecoveryFile(t, filepath.Join(current.Root, "server.properties"), "level-name=world\n# mixed runtime configuration\n")
+	world := filepath.Join(current.Root, "world", "level.dat")
+	putRecoveryFile(t, world, "valuable-new-world-progress")
+	b, err := json.Marshal(map[string]any{"directory": directory, "previous": previous, "state": "prepared", "backup_id": id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.app.DB.Exec("INSERT INTO settings(key,value) VALUES(?,?)", "runtime-pending:"+current.ID, string(b)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.recoverInstance(t.Context(), []string{"runtime", current.ID}, false); err == nil {
+		t.Fatal("runtime recovery accepted no confirmation")
+	}
+	recovered, err := p.recoverInstance(t.Context(), []string{"runtime", current.ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recoveryText(t, filepath.Join(current.Root, current.Jar)) != launcher || recoveryText(t, filepath.Join(current.Root, "server.properties")) != properties || recoveryText(t, world) != "valuable-new-world-progress" {
+		t.Fatal("runtime recovery failed to recover runtime files or rolled back the world")
+	}
+	var result struct {
+		InspectionID string `json:"inspection_backup_id"`
+	}
+	if err := json.Unmarshal(recovered.(jobs.Job).Result, &result); err != nil || !model.ValidID(result.InspectionID) {
+		t.Fatal("runtime recovery did not preserve the mixed inspection state", err)
+	}
+	storage, err := p.backupRoot(current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	if _, err := backups.Verify(t.Context(), storage, result.InspectionID, nil); err != nil {
+		t.Fatal("runtime inspection archive is not verified", err)
+	}
+	if _, err := storage.Lstat(result.InspectionID + ".instance.json"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("mixed runtime inspection state was given misleading portable metadata", err)
+	}
+	if _, err := p.runJob(t.Context(), current.ID, "start", map[string]any{}); err == nil || rt.starts != 0 {
+		t.Fatal("recovered old runtime bypassed the upgraded-world review guard")
 	}
 }
 

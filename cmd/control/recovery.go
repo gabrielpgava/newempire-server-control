@@ -491,8 +491,10 @@ func (p *offlinePanel) recoverInstance(ctx context.Context, args []string, confi
 		}
 		return p.runJob(ctx, i.ID, "restore_reconcile", map[string]bool{"use_previous": previous, "confirm": true})
 	}
-	if err := p.requireRestoreSettled(ctx, i.ID); err != nil {
-		return nil, err
+	if args[0] != "filesystem" {
+		if err := p.requireRestoreSettled(ctx, i.ID); err != nil {
+			return nil, err
+		}
 	}
 	if err := p.app.AssertStopped(ctx, i); err != nil {
 		return nil, err
@@ -576,12 +578,6 @@ func (p *offlinePanel) registerRecoveryJobs() {
 		if json.Unmarshal(raw, &body) != nil || !body.Confirm || body.ID != "" {
 			return nil, errors.New("explicit runtime recovery confirmation is required")
 		}
-		recovery, ok := any(p.app).(interface {
-			RecoverRuntime(context.Context, *jobs.Task, string) (any, error)
-		})
-		if !ok {
-			return nil, errors.New("this binary does not implement verified offline runtime recovery; preserve runtime-pending state and staging, and use a recovery-capable official binary")
-		}
-		return recovery.RecoverRuntime(ctx, t, t.Job.InstanceID)
+		return p.app.RecoverRuntime(ctx, t, t.Job.InstanceID)
 	})
 }

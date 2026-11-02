@@ -86,10 +86,33 @@ sudo -u new-empire-control /opt/new-empire-control/control recover --config /etc
 
 The previous selection also requires an exact match against its recorded verified
 backup; it is not a request to roll a world back. While this guard exists,
-filesystem/content/file/runtime recovery and new backups/restores refuse rather
-than create a backup with misleading runtime metadata. If neither trusted tree
-matches or the live target is missing, preserve all state and use a
-version-specific recovery plan. Never clear the guard by editing SQLite.
+content/file/runtime recovery and new backups/restores refuse rather than create
+a backup with misleading runtime metadata. If a current tree still exists,
+filesystem recovery also refuses: reconcile that exact tree's recorded identity
+first. Never clear the guard by editing SQLite.
+
+If the original tree was retained but the process stopped before installing the
+staged tree, the live target may be missing. `recover list` can bind the retained
+directory's actual-target journal to the pending restore's stage and any recorded
+recovery/journal identifiers, even when the job never persisted its result:
+
+```sh
+sudo -u new-empire-control /opt/new-empire-control/control recover --config /etc/new-empire-control/config.json list INSTANCE_ID
+sudo -u new-empire-control /opt/new-empire-control/control recover --config /etc/new-empire-control/config.json --confirm filesystem INSTANCE_ID .nesc-recovery-RECOVERY_ID
+sudo -u new-empire-control /opt/new-empire-control/control recover --config /etc/new-empire-control/config.json --confirm restore-previous INSTANCE_ID
+```
+
+The filesystem step requires stopped Minecraft, verifies both recorded backup
+archives, validates the pre-restore portable identity, and checks every backed-up
+path/hash in the selected retained tree against that pre-restore snapshot before
+moving it into the missing target. It does not guess from a directory name or
+change an adopted tree's ownership. No safety backup of a nonexistent target is
+possible: the two original verified snapshots remain restore points, and the
+verified retained-source archive and original journals are preserved as well.
+The original pending record remains unchanged after the move; startup is still
+blocked until the separately confirmed `restore-previous` job verifies the tree
+in place and reconciles its helper/database identity. If no trusted journal and
+snapshot match, preserve all data for a version-specific recovery plan.
 
 ## Retained filesystem, file and content recovery
 
@@ -104,15 +127,17 @@ sudo -u new-empire-control /opt/new-empire-control/control recover --config /etc
 
 - **Filesystem:** explicitly swaps back a recorded full instance tree. It binds
   the selected directory to that instance's swap journal and original verified
-  backup, revalidates its contents, and backs up both selected and displaced
-  data. It retains the displaced tree and syncs the swap journal/directories.
-  This conservative command refuses pending metadata reconciliation, missing
-  portable job records, changed retained trees, a missing live target, or
-  configuration that differs from the database. Reconcile a pending restore
-  first; differing configuration needs an explicitly reviewed full backup
-  restore so helper/database identity changes together. Missing targets/records
-  require a version-specific recovery plan. Do not rename directories by hand
-  and leave database/runtime identity inconsistent.
+  backup and revalidates its contents. Without an existing pending restore it
+  requires unchanged metadata and backs up both selected and displaced data;
+  it retains the displaced tree and syncs the swap journal/directories. Run
+  `recover --confirm restore INSTANCE_ID` afterward to reconcile the selected
+  backup's helper/database identity: filesystem completion alone never clears
+  the startup guard. Pending/missing-target recovery uses the separate previous
+  identity procedure above. Changed retained trees, unbound journals, missing
+  portable records, or differing metadata without a pending plan cause refusal.
+  Differing metadata in that last case needs an explicitly reviewed full backup
+  restore so runtime/helper identity changes together. Do not rename directories
+  by hand and leave database/runtime identity inconsistent.
 - **File:** restores an existing trash token to its recorded destination without
   overwriting a newer file, using the existing file-recovery job and verified
   safety backup. Conflicting pending content must be recovered first.
@@ -124,13 +149,17 @@ sudo -u new-empire-control /opt/new-empire-control/control recover --config /etc
   safety backup remains available. Changed mods/locks/configuration or damaged
   recovery records cause refusal, not a guessed rollback.
 
-`recover --confirm runtime INSTANCE_ID` is available only in a binary implementing
-verified retained-runtime recovery. It must use a validated pending runtime
-record and verified original backup, preserve displaced runtime/content, and
-leave worlds untouched. A binary without that implementation reports a failed
-durable job rather than guessing from staging directory names. A Minecraft world
-format change can require a separate explicitly confirmed pre-upgrade world
-restore before the old runtime is safe to start.
+`recover --confirm runtime INSTANCE_ID` recovers only a recorded pending runtime
+migration. It verifies the pre-upgrade archive and portable identity, then matches
+the retained launcher and properties against that snapshot before restoring
+runtime/content. A verified raw `inspection_backup_id` preserves the possibly
+mixed displaced state without a misleading `.instance.json` sidecar. Worlds are
+never restored by this operation, and Minecraft remains stopped. A changed
+Minecraft version latches a world-format review guard before metadata replacement;
+it persists across completion failures and can require a separately confirmed
+pre-upgrade world restore before the old runtime is safe to start. Missing,
+changed, or unbound recovery material fails closed rather than guessing from
+staging directory names.
 
 ## Emergency owner access
 
