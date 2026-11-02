@@ -62,23 +62,76 @@ function Panel({ user }: { user: User }) {
   return <QueryState query={settings}>{data => <><Section title="Panel settings" description={`Version ${data.version} · Runtime provider: ${data.runtime_provider}`}><SubmitForm onSubmit={form => operation.run('/settings', { backup_retention: { enabled: form.get('retention_enabled') === 'on', keep_last: Number(form.get('keep_last')) } }, 'PUT').then(() => {})}><fieldset disabled={operation.isPending}><div className="form-grid"><Field label="Public panel URL" hint="Managed by the root-owned host configuration. Change this value on the panel host, not in the browser."><input type="url" value={data.public_url} readOnly /></Field><Field label="Backups to retain" hint="Retention must preserve the configured minimum recovery coverage."><input name="keep_last" type="number" min={1} max={10000} required defaultValue={data.backup_retention.keep_last} /></Field></div><CheckField name="retention_enabled" defaultChecked={data.backup_retention.enabled}>Enable backup retention</CheckField><Button type="submit" variant="primary" busy={operation.isPending}>Save panel settings</Button></fieldset></SubmitForm><SavedFeedback operation={operation} /><dl className="key-values"><div><dt>Adoption roots</dt><dd>{data.adopt_roots.length ? data.adopt_roots.map(path => <code className="block" key={path}>{path}</code>) : 'None configured on host'}</dd></div><div><dt>Java allowlist</dt><dd>{data.java_paths.length ? data.java_paths.map(path => <code className="block" key={path}>{path}</code>) : 'None configured on host'}</dd></div></dl></Section><StorageSettings settings={data} owner={owner} /><NotificationSettings settings={data} owner={owner} /></>}</QueryState>
 }
 
-function Users({ instances }: { instances: Instance[] }) {
+function Users({ instances, currentUser }: { instances: Instance[]; currentUser: User }) {
   const users = useAPI<User[]>('/users')
   const operation = useOperation<User>()
+  const revoke = useOperation<{ ok: boolean }>()
   const [role, setRole] = useState('viewer')
   const confirm = useConfirm()
-  return <><Section title="Panel users"><QueryState query={users} empty={<Empty title="No users returned">Check the owner account and refresh.</Empty>}>{data => <DataTable label="Panel users" rows={data} rowKey={user => user.id} columns={[{ header: 'Username', render: user => <strong>{user.username}</strong> }, { header: 'Role', render: user => user.role }, { header: 'Two-factor', render: user => user.two_factor ? 'Enabled' : 'Not enabled' }]} />}</QueryState></Section><Section title="Create a user" description="Operators and viewers require explicit instance grants. No grant means no access."><SubmitForm onSubmit={async (data, form) => {
+  async function revokeUser(target: User) {
+    if (currentUser.role !== 'owner' || target.role === 'owner' || target.id === currentUser.id) return
+    if (await confirm({ title: `Revoke ${target.username}?`, body: <p>All sessions and instance access for this user will be revoked. Owner accounts and your own account cannot be revoked here.</p>, action: 'Revoke user', danger: true, verify: target.username })) await revoke.run(`/users/${encodeURIComponent(target.id)}`, {}, 'DELETE').catch(() => {})
+  }
+  return <><Section title="Panel users" description="Only the owner can revoke non-owner accounts. This does not bypass another user's two-factor authentication."><QueryState query={users} empty={<Empty title="No users returned">Check the owner account and refresh.</Empty>}>{data => <DataTable label="Panel users" rows={data} rowKey={user => user.id} columns={[
+    { header: 'Username', render: user => <strong>{user.username}</strong> },
+    { header: 'Role', render: user => user.role },
+    { header: 'Two-factor', render: user => user.two_factor ? 'Enabled' : 'Not enabled' },
+    { header: 'Actions', render: user => user.id === currentUser.id ? <span className="muted">Current account</span> : user.role === 'owner' ? <span className="muted">Owner account</span> : <Button variant="danger" disabled={revoke.isPending || operation.isPending} aria-label={`Revoke user ${user.username}`} onClick={() => { void revokeUser(user) }}>Revoke user</Button> },
+  ]} />}</QueryState>{revoke.error && <ErrorNotice error={revoke.error} />}{revoke.isSuccess && <Notice tone="success">User access revoked. All sessions for that account have been invalidated.</Notice>}</Section><Section title="Create a user" description="Operators and viewers require explicit instance grants. No grant means no access."><SubmitForm onSubmit={async (data, form) => {
     const ids = data.getAll('instance_ids').map(String)
-    if (role === 'admin' && !await confirm({ title: 'Create an administrator?', body: <p>Administrators can modify all instances, files, content, backups, runtime, and panel update settings.</p>, action: 'Create administrator', danger: true })) return
+    if (role === 'admin' && !await confirm({ title: 'Create an administrator?', body: <p>Administrators can modify all instances, files, content, backups, runtime, and noncredential panel preferences. Application updates and credentials remain owner-only.</p>, action: 'Create administrator', danger: true })) return
     await operation.run('/users', { username: data.get('username'), password: data.get('password'), role, instance_ids: ids }); form.reset(); setRole('viewer')
-  }}><fieldset disabled={operation.isPending}><div className="form-grid"><Field label="Username"><input name="username" required minLength={3} maxLength={64} autoComplete="off" /></Field><Field label="Initial password"><input name="password" type="password" required minLength={12} maxLength={1024} autoComplete="new-password" /></Field><Field label="Role"><select value={role} onChange={event => setRole(event.target.value)}><option value="viewer">Viewer — read only</option><option value="operator">Operator — lifecycle, console, players, backups</option><option value="admin">Administrator — all instances</option></select></Field></div>{role !== 'admin' && <fieldset className="instance-grants"><legend>Instance grants</legend>{instances.length ? instances.map(instance => <CheckField key={instance.id} name="instance_ids" value={instance.id}>{instance.name}</CheckField>) : <p>No instances exist yet. This user will have no instance access.</p>}</fieldset>}<Button type="submit" variant="primary" busy={operation.isPending}><UserPlus size={16} />Create user</Button></fieldset></SubmitForm>{operation.error && <ErrorNotice error={operation.error} />}{operation.isSuccess && <Notice tone="success">User account created.</Notice>}</Section></>
+  }}><fieldset disabled={operation.isPending || revoke.isPending}><div className="form-grid"><Field label="Username"><input name="username" required minLength={3} maxLength={64} autoComplete="off" /></Field><Field label="Initial password"><input name="password" type="password" required minLength={12} maxLength={1024} autoComplete="new-password" /></Field><Field label="Role"><select value={role} onChange={event => setRole(event.target.value)}><option value="viewer">Viewer — read only</option><option value="operator">Operator — lifecycle, console, players, backups</option><option value="admin">Administrator — all instances</option></select></Field></div>{role !== 'admin' && <fieldset className="instance-grants"><legend>Instance grants</legend>{instances.length ? instances.map(instance => <CheckField key={instance.id} name="instance_ids" value={instance.id}>{instance.name}</CheckField>) : <p>No instances exist yet. This user will have no instance access.</p>}</fieldset>}<Button type="submit" variant="primary" busy={operation.isPending}><UserPlus size={16} />Create user</Button></fieldset></SubmitForm>{operation.error && <ErrorNotice error={operation.error} />}{operation.isSuccess && <Notice tone="success">User account created.</Notice>}</Section></>
 }
 
 function Account({ user }: { user: User }) {
   const enroll = useOperation<{ secret: string; uri?: string }>()
-  const enable = useOperation()
+  const enable = useOperation<{ ok: boolean }>()
+  const disable = useOperation<{ ok: boolean }>()
+  const passwordChange = useOperation<{ ok: boolean }>()
   const client = useQueryClient()
-  return <Section title="Account security" description={`Signed in as ${user.username} · ${user.role}`}><p><Status value={user.two_factor ? 'two-factor enabled' : 'two-factor not enabled'} /></p>{!user.two_factor && <><p>Add a TOTP authenticator. Keep its recovery information outside this panel.</p><Button busy={enroll.isPending} onClick={() => { void enroll.run('/auth/totp', {}).catch(() => {}) }}><KeyRound size={16} />Generate authenticator secret</Button>{enroll.error && <ErrorNotice error={enroll.error} />}{enroll.data && <><Notice tone="warning">This secret is shown only for enrollment. Do not share it or include it in a support screenshot.</Notice><Field label="Authenticator secret"><input value={enroll.data.secret} readOnly autoComplete="off" /></Field><SubmitForm onSubmit={async data => { await enable.run('/auth/totp', { password: data.get('password'), secret: enroll.data!.secret, code: data.get('code') }); setSession(); client.clear(); window.location.reload() }}><div className="form-grid"><Field label="Current password"><input name="password" type="password" autoComplete="current-password" required /></Field><Field label="Six-digit authenticator code"><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></Field></div><Button type="submit" variant="primary" busy={enable.isPending}><ShieldCheck size={16} />Enable two-factor and sign in again</Button></SubmitForm>{enable.error && <ErrorNotice error={enable.error} />}</>}</>}</Section>
+  const confirm = useConfirm()
+  const busy = enroll.isPending || enable.isPending || disable.isPending || passwordChange.isPending
+  function signInAgain() { enroll.reset(); setSession(); client.clear(); window.location.reload() }
+  return <>
+    <Section title="Account security" description={`Signed in as ${user.username} · ${user.role}`}>
+      <p><Status value={user.two_factor ? 'two-factor enabled' : 'two-factor not enabled'} /></p>
+      {user.two_factor ? <>
+        <Notice tone="warning">Disabling two-factor authentication removes the additional sign-in protection and revokes all current sessions. Your current password and a valid authenticator code are required.</Notice>
+        <SubmitForm onSubmit={async (data, form) => {
+          if (!await confirm({ title: 'Disable two-factor authentication?', body: <p>This removes the authenticator requirement for your own account and revokes all your current sessions. You will need to sign in again.</p>, action: 'Disable two-factor and sign out', danger: true })) return
+          await disable.run('/auth/totp', { password: data.get('password'), code: data.get('code') }, 'DELETE'); form.reset(); signInAgain()
+        }}>
+          <fieldset disabled={busy}><div className="form-grid"><Field label="Current password"><input name="password" type="password" autoComplete="current-password" required /></Field><Field label="Six-digit authenticator code"><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></Field></div><Button type="submit" variant="danger" busy={disable.isPending}>Disable two-factor authentication</Button></fieldset>
+        </SubmitForm>
+        {disable.error && <ErrorNotice error={disable.error} />}
+      </> : <>
+        <p>Add a TOTP authenticator. Keep its recovery information outside this panel.</p>
+        <Button busy={enroll.isPending} disabled={busy} onClick={() => { void enroll.run('/auth/totp', {}).catch(() => {}) }}><KeyRound size={16} />Generate authenticator secret</Button>
+        {enroll.error && <ErrorNotice error={enroll.error} />}
+        {enroll.data && <>
+          <Notice tone="warning">This secret is shown only for enrollment. Do not share it or include it in a support screenshot.</Notice>
+          <Field label="Authenticator secret"><input value={enroll.data.secret} readOnly autoComplete="off" /></Field>
+          <SubmitForm onSubmit={async (data, form) => { await enable.run('/auth/totp', { password: data.get('password'), secret: enroll.data!.secret, code: data.get('code') }); form.reset(); signInAgain() }}>
+            <fieldset disabled={busy}><div className="form-grid"><Field label="Current password"><input name="password" type="password" autoComplete="current-password" required /></Field><Field label="Six-digit authenticator code"><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></Field></div><Button type="submit" variant="primary" busy={enable.isPending}><ShieldCheck size={16} />Enable two-factor and sign in again</Button></fieldset>
+          </SubmitForm>
+          {enable.error && <ErrorNotice error={enable.error} />}
+        </>}
+      </>}
+    </Section>
+    <Section title="Change password" description="Change only your own password. All current sessions will be revoked after the change.">
+      <SubmitForm onSubmit={async (data, form) => {
+        const next = String(data.get('new_password') ?? '')
+        if (new TextEncoder().encode(next).byteLength < 12) throw new Error('Use a new password of at least 12 UTF-8 bytes.')
+        if (next !== data.get('password_confirmation')) throw new Error('The new passwords do not match.')
+        if (!await confirm({ title: 'Change your password and sign out?', body: <p>All current sessions for your account will be revoked. Use your new password to sign in again.</p>, action: 'Change password and sign out', danger: true })) return
+        await passwordChange.run('/auth/password', { current_password: data.get('current_password'), new_password: next }); form.reset(); signInAgain()
+      }}>
+        <fieldset disabled={busy}><div className="form-grid"><Field label="Current password"><input name="current_password" type="password" autoComplete="current-password" required /></Field><Field label="New password" hint="At least 12 UTF-8 bytes (12 characters for an ASCII password)."><input name="new_password" type="password" autoComplete="new-password" maxLength={1024} required /></Field><Field label="Confirm new password"><input name="password_confirmation" type="password" autoComplete="new-password" maxLength={1024} required /></Field></div><Button type="submit" variant="primary" busy={passwordChange.isPending}>Change password</Button></fieldset>
+      </SubmitForm>
+      {passwordChange.error && <ErrorNotice error={passwordChange.error} />}
+    </Section>
+  </>
 }
 
 function Audit() {
@@ -90,5 +143,5 @@ export function Settings({ instance, instances, user }: { instance?: Instance; i
   const [tab, setTab] = useState(instance ? 'server' : 'account')
   const tabs = [...(instance ? [{ id: 'server', label: 'Server properties' }, { id: 'runtime', label: 'Fabric & Java' }] : []), ...(canAdmin(user) ? [{ id: 'panel', label: 'Panel' }, { id: 'audit', label: 'Audit' }] : []), ...(user.role === 'owner' ? [{ id: 'users', label: 'Users & access' }] : []), { id: 'account', label: 'Account security' }]
   const active = tabs.some(item => item.id === tab) ? tab : 'account'
-  return <><PageHeading title="Settings" description="Instance configuration, panel preferences, and access controls." /><div className="tabs" aria-label="Settings sections">{tabs.map(item => <Button key={item.id} className={active === item.id ? 'active' : ''} variant="ghost" aria-pressed={active === item.id} onClick={() => setTab(item.id)}>{item.label}</Button>)}</div>{active === 'server' && instance && <Properties instance={instance} user={user} />}{active === 'runtime' && instance && <Runtime instance={instance} user={user} />}{active === 'panel' && canAdmin(user) && <Panel user={user} />}{active === 'users' && user.role === 'owner' && <Users instances={instances} />}{active === 'audit' && canAdmin(user) && <Audit />}{active === 'account' && <Account user={user} />}</>
+  return <><PageHeading title="Settings" description="Instance configuration, panel preferences, and access controls." /><div className="tabs" aria-label="Settings sections">{tabs.map(item => <Button key={item.id} className={active === item.id ? 'active' : ''} variant="ghost" aria-pressed={active === item.id} onClick={() => setTab(item.id)}>{item.label}</Button>)}</div>{active === 'server' && instance && <Properties instance={instance} user={user} />}{active === 'runtime' && instance && <Runtime instance={instance} user={user} />}{active === 'panel' && canAdmin(user) && <Panel user={user} />}{active === 'users' && user.role === 'owner' && <Users instances={instances} currentUser={user} />}{active === 'audit' && canAdmin(user) && <Audit />}{active === 'account' && <Account user={user} />}</>
 }
