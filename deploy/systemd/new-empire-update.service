@@ -1,0 +1,27 @@
+[Unit]
+Description=Verified New Empire panel updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/new-empire-control
+ExecStart=/opt/new-empire-control/control update-helper --config /etc/new-empire-control/config.json
+TimeoutStartSec=600s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/opt/new-empire-control /var/lib/new-empire-control /etc/new-empire-control
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+StandardOutput=journal
+StandardError=journal

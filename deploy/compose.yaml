@@ -1,0 +1,19 @@
+name: new-empire-ui-dev
+services:
+  ui:
+    image: ${NEC_UI_DEV_IMAGE:?Set NEC_UI_DEV_IMAGE to a trusted Node image compatible with web/package.json}
+    working_dir: /workspace
+    command: [npm, run, dev, --, --host, 0.0.0.0]
+    environment:
+      npm_config_cache: /tmp/npm-cache
+    ports:
+      - "127.0.0.1:5173:5173"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - ../web:/workspace:ro
+      - ui-node-modules:/workspace/node_modules
+volumes:
+  ui-node-modules:
