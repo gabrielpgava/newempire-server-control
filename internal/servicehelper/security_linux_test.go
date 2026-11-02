@@ -131,6 +131,18 @@ func TestPrepareManagedNormalizesStoppedTree(t *testing.T) {
 		t.Skip("requires an isolated root fixture with CHOWN/DAC_OVERRIDE/FOWNER/FSETID capabilities")
 	}
 	dir := t.TempDir()
+	if base := os.Getenv("NEC_TEST_ACL_DIR"); base != "" {
+		var err error
+		dir, err = os.MkdirTemp(base, "managed-acl-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Error(err)
+			}
+		})
+	}
 	path := filepath.Join(dir, "minecraft-created.properties")
 	if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
 		t.Fatal(err)

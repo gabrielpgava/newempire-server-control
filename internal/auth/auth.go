@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -205,8 +206,23 @@ func (s *Service) Login(ctx context.Context, username, password, code string) (S
 		u.TwoFactor = true
 	}
 	sess := Session{User: u, CSRF: Token(), Token: Token()}
-	_, err = s.DB.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)", HashToken(sess.Token), u.ID, sess.CSRF, time.Now().Add(12*time.Hour).Unix())
-	return sess, err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+	var currentHash string
+	var currentTOTP []byte
+	if err := tx.QueryRowContext(ctx, "SELECT password_hash,totp FROM users WHERE id=?", u.ID).Scan(&currentHash, &currentTOTP); err != nil {
+		return Session{}, errors.New("account credentials changed; sign in again")
+	}
+	if currentHash != hash || !bytes.Equal(currentTOTP, encrypted) {
+		return Session{}, errors.New("account credentials changed; sign in again")
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)", HashToken(sess.Token), u.ID, sess.CSRF, time.Now().Add(12*time.Hour).Unix()); err != nil {
+		return Session{}, err
+	}
+	return sess, tx.Commit()
 }
 
 func (s *Service) Session(ctx context.Context, token string) (Session, error) {
@@ -277,6 +293,12 @@ func NewTOTP() string {
 }
 
 func (s *Service) EnableTOTP(ctx context.Context, userID, password, secret, code string) error {
+	select {
+	case s.hashLimit <- struct{}{}:
+		defer func() { <-s.hashLimit }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	var hash string
 	if err := s.DB.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id=?", userID).Scan(&hash); err != nil {
 		return err
@@ -288,11 +310,111 @@ func (s *Service) EnableTOTP(ctx context.Context, userID, password, secret, code
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, "UPDATE users SET totp=? WHERE id=?", encrypted, userID)
-	if err == nil {
-		_, err = s.DB.ExecContext(ctx, "DELETE FROM sessions WHERE user_id=?", userID)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "UPDATE users SET totp=? WHERE id=? AND password_hash=? AND totp IS NULL", encrypted, userID, hash)
+	if err != nil {
+		return err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("account changed or two-factor authentication is already enabled; disable it with a valid code before re-enrolling")
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id=?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) ChangePassword(ctx context.Context, userID, current, password string) error {
+	select {
+	case s.hashLimit <- struct{}{}:
+		defer func() { <-s.hashLimit }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	var old string
+	if err := s.DB.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id=?", userID).Scan(&old); err != nil {
+		return err
+	}
+	if !VerifyPassword(old, current) {
+		return errors.New("current password is invalid")
+	}
+	hash, err := PasswordHash(password)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash=? WHERE id=? AND password_hash=?", hash, userID, old)
+	if err != nil {
+		return err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("password changed concurrently; sign in again")
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id=?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Service) DisableTOTP(ctx context.Context, userID, password, code string) error {
+	select {
+	case s.hashLimit <- struct{}{}:
+		defer func() { <-s.hashLimit }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	var hash string
+	var encrypted []byte
+	if err := s.DB.QueryRowContext(ctx, "SELECT password_hash,totp FROM users WHERE id=?", userID).Scan(&hash, &encrypted); err != nil {
+		return err
+	}
+	if !VerifyPassword(hash, password) {
+		return errors.New("invalid password or authentication code")
+	}
+	secret, err := s.Vault.Open(encrypted, "totp:"+userID)
+	if err != nil || !VerifyTOTP(string(secret), code, time.Now()) {
+		return errors.New("invalid password or authentication code")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "UPDATE users SET totp=NULL WHERE id=? AND password_hash=? AND totp=?", userID, hash, encrypted)
+	if err != nil {
+		return err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("account security changed concurrently; sign in again")
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id=?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Service) RevokeUser(ctx context.Context, actor, id string) error {
+	if !model.ValidID(id) || id == actor {
+		return errors.New("cannot revoke your own account or an invalid account")
+	}
+	result, err := s.DB.ExecContext(ctx, "DELETE FROM users WHERE id=? AND role!='owner'", id)
+	if err != nil {
+		return err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("user not found or owner accounts cannot be revoked")
+	}
+	return nil
 }
 
 func Permitted(role, level string) bool {

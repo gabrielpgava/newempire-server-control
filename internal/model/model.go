@@ -43,6 +43,7 @@ type RuntimeStatus struct {
 	UptimeSeconds float64  `json:"uptime_seconds"`
 	MemoryBytes   uint64   `json:"memory_bytes"`
 	CPUSeconds    float64  `json:"cpu_seconds"`
+	DiskFreeBytes *uint64  `json:"disk_free_bytes,omitempty"`
 	Players       []string `json:"players"`
 	Detail        string   `json:"detail,omitempty"`
 }

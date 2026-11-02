@@ -22,12 +22,12 @@ class RepositoryChecks(unittest.TestCase):
     def test_exactly_one_api_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            (root / 'docs').mkdir()
+            (root / 'docs/api').mkdir(parents=True)
             with self.assertRaises(ValueError):
                 check.openapi_file(root)
-            path = root / 'docs/openapi.json'
+            path = root / 'docs/api/openapi.json'
             path.write_text(json.dumps({'openapi': '3.1.0'}))
             self.assertEqual(check.openapi_file(root), path)
-            (root / 'docs/openapi.yaml').touch()
+            (root / 'docs/api/openapi.yaml').touch()
             with self.assertRaises(ValueError):
                 check.openapi_file(root)

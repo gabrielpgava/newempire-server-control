@@ -23,6 +23,7 @@ type githubRelease struct {
 	Tag        string        `json:"tag_name"`
 	Draft      bool          `json:"draft"`
 	Prerelease bool          `json:"prerelease"`
+	Notes      string        `json:"body"`
 	Assets     []githubAsset `json:"assets"`
 }
 
@@ -36,7 +37,7 @@ func (m *Manager) request(ctx context.Context, address string) (*http.Response, 
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Accept-Encoding", "identity")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("X-GitHub-Api-Version", "2026-03-10")
 	req.Header.Set("User-Agent", "new-empire-control-verified-updater")
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -128,6 +129,8 @@ func (m *Manager) Check(ctx context.Context, c Channel) (CheckResult, error) {
 		return result, err
 	}
 	result.Available = &mf
+	result.Notes = candidates[0].release.Notes
+	result.Prerelease = candidates[0].release.Prerelease
 	return result, nil
 }
 

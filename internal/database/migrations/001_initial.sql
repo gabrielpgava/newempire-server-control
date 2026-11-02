@@ -19,6 +19,11 @@ CREATE TABLE instance_permissions (
  role TEXT NOT NULL CHECK(role IN ('operator','viewer')),
  PRIMARY KEY(user_id,instance_id)
 );
+CREATE TRIGGER instance_collision BEFORE INSERT ON instances
+WHEN EXISTS(SELECT 1 FROM instances WHERE
+ port=NEW.rcon_port OR rcon_port=NEW.port OR
+ instr(NEW.root,root||'/')=1 OR instr(root,NEW.root||'/')=1)
+BEGIN SELECT RAISE(ABORT,'instance ports or directories overlap'); END;
 CREATE TABLE jobs (
  id TEXT PRIMARY KEY, instance_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
  payload TEXT NOT NULL CHECK(json_valid(payload)),

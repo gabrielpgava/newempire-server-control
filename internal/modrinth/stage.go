@@ -229,4 +229,7 @@ func verifyStage(ctx context.Context, stage *os.Root, plan *Plan) error {
 	return nil
 }
 
-func sameStates(a, b []FileState) bool { return slices.Equal(a, b) }
+// The runtime helper normalizes permissions; content identity is path, size, and hash.
+func sameStates(a, b []FileState) bool {
+	return slices.EqualFunc(a, b, func(a, b FileState) bool { return a.Path == b.Path && a.Size == b.Size && a.SHA512 == b.SHA512 })
+}

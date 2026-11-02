@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gabrielpgava/newempire-server-control/internal/database"
@@ -47,6 +48,7 @@ type Engine struct {
 	wake     chan struct{}
 	Events   chan struct{}
 	wg       sync.WaitGroup
+	Revision atomic.Uint64
 }
 type Task struct {
 	Job    Job
@@ -62,6 +64,7 @@ func (e *Engine) Register(kind string, retries int, h Handler) {
 	e.handlers[kind] = registration{h, retries}
 }
 func (e *Engine) signal() {
+	e.Revision.Add(1)
 	select {
 	case e.wake <- struct{}{}:
 	default:
@@ -287,11 +290,9 @@ func (e *Engine) run(ctx context.Context, j Job) {
 	finishCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	state, message := "succeeded", ""
-	progress := 100
 	if err != nil {
 		state = "failed"
 		message = err.Error()
-		progress = j.Progress
 		if errors.Is(err, context.Canceled) {
 			state = "cancelled"
 		}
@@ -304,12 +305,14 @@ func (e *Engine) run(ctx context.Context, j Job) {
 	}
 	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && j.Attempts <= registration.retries {
 		delay := min(1<<j.Attempts, 300)
-		_, dbErr := e.DB.ExecContext(finishCtx, "UPDATE jobs SET state='queued',error=?,available_at=?,cancellable=1 WHERE id=? AND cancel_requested=0", message, time.Now().Add(time.Duration(delay)*time.Second).Unix(), j.ID)
+		r, dbErr := e.DB.ExecContext(finishCtx, "UPDATE jobs SET state='queued',error=?,available_at=?,cancellable=1 WHERE id=? AND cancel_requested=0", message, time.Now().Add(time.Duration(delay)*time.Second).Unix(), j.ID)
 		if dbErr != nil {
 			slog.Error("retry job", "error", dbErr)
+		} else if n, _ := r.RowsAffected(); n == 1 {
+			e.signal()
+			return
 		}
-		e.signal()
-		return
+		state = "cancelled"
 	}
 	b, encodeErr := json.Marshal(result)
 	if encodeErr != nil {
@@ -318,7 +321,6 @@ func (e *Engine) run(ctx context.Context, j Job) {
 		b = []byte(`null`)
 	}
 	_, dbErr := e.DB.ExecContext(finishCtx, "UPDATE jobs SET state=?,error=?,result=?,progress=CASE WHEN ?='succeeded' THEN 100 ELSE progress END,finished_at=? WHERE id=?", state, message, string(b), state, time.Now().Unix(), j.ID)
-	_ = progress
 	if dbErr != nil {
 		slog.Error("finish job", "job", j.ID, "error", dbErr)
 	}

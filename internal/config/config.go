@@ -11,27 +11,38 @@ import (
 )
 
 type Config struct {
-	Listen            string   `json:"listen"`
-	PublicURL         string   `json:"public_url"`
-	DataDir           string   `json:"data_dir"`
-	InstanceDir       string   `json:"instance_dir"`
-	BackupDir         string   `json:"backup_dir"`
-	AdoptRoots        []string `json:"adopt_roots"`
-	JavaPaths         []string `json:"java_paths"`
-	RuntimeHelper     string   `json:"runtime_helper"`
-	SecureCookies     bool     `json:"secure_cookies"`
-	MaxUploadBytes    int64    `json:"max_upload_bytes"`
-	ReleaseRepository string   `json:"release_repository"`
-	ReleasePublicKey  string   `json:"release_public_key"`
-	InstallDir        string   `json:"install_dir"`
+	SourcePath             string   `json:"-"`
+	Listen                 string   `json:"listen"`
+	PublicURL              string   `json:"public_url"`
+	DataDir                string   `json:"data_dir"`
+	InstanceDir            string   `json:"instance_dir"`
+	BackupDir              string   `json:"backup_dir"`
+	AdoptRoots             []string `json:"adopt_roots"`
+	JavaPaths              []string `json:"java_paths"`
+	RuntimeHelper          string   `json:"runtime_helper"`
+	SecureCookies          bool     `json:"secure_cookies"`
+	MaxUploadBytes         int64    `json:"max_upload_bytes"`
+	ReleaseRepository      string   `json:"release_repository"`
+	ReleasePublicKey       string   `json:"release_public_key"`
+	InstallDir             string   `json:"install_dir"`
+	MetricsIntervalSeconds int      `json:"metrics_interval_seconds"`
+	MetricsRetentionDays   int      `json:"metrics_retention_days"`
+	DiskWarningBytes       uint64   `json:"disk_warning_bytes"`
 }
 
 func Default() Config {
-	return Config{Listen: "127.0.0.1:8080", PublicURL: "http://127.0.0.1:8080", DataDir: "data", RuntimeHelper: "/usr/local/libexec/new-empire-runtime", MaxUploadBytes: 32 << 30, ReleaseRepository: "gabrielpgava/newempire-server-control", InstallDir: "/opt/new-empire-control"}
+	return Config{Listen: "127.0.0.1:8080", PublicURL: "http://127.0.0.1:8080", DataDir: "data", RuntimeHelper: "/usr/local/libexec/new-empire-runtime", MaxUploadBytes: 32 << 30, ReleaseRepository: "gabrielpgava/newempire-server-control", InstallDir: "/opt/new-empire-control", MetricsIntervalSeconds: 60, MetricsRetentionDays: 7, DiskWarningBytes: 1 << 30}
 }
 
 func Load(path string) (Config, error) {
 	c := Default()
+	if path != "" {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return c, err
+		}
+		c.SourcePath = absolute
+	}
 	if path != "" {
 		f, err := os.Open(path)
 		if err != nil {
@@ -72,7 +83,7 @@ func Load(path string) (Config, error) {
 		return c, errors.New("backup and instance directories must be separate")
 	}
 	u, err := url.Parse(c.PublicURL)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Path != "" && u.Path != "/" {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") || u.Path != "" && u.Path != "/" {
 		return c, errors.New("public_url must be an HTTP(S) origin")
 	}
 	if u.Scheme == "https" {
@@ -83,6 +94,9 @@ func Load(path string) (Config, error) {
 	}
 	if c.MaxUploadBytes < 1 {
 		return c, errors.New("max_upload_bytes must be positive")
+	}
+	if c.MetricsIntervalSeconds < 30 || c.MetricsIntervalSeconds > 3600 || c.MetricsRetentionDays < 1 || c.MetricsRetentionDays > 90 {
+		return c, errors.New("metrics sampling must be 30–3600 seconds with 1–90 retention days")
 	}
 	return c, nil
 }

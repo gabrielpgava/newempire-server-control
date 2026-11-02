@@ -47,6 +47,8 @@ type CheckResult struct {
 	CurrentVersion string    `json:"current_version"`
 	Channel        Channel   `json:"channel"`
 	Available      *Manifest `json:"available"`
+	Notes          string    `json:"notes"`
+	Prerelease     bool      `json:"prerelease"`
 }
 
 func New(opts Options) (*Manager, error) {

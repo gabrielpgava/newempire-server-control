@@ -192,7 +192,7 @@ func TestInvalidEventsNeverReachTransport(t *testing.T) {
 			t.Fatalf("event validation or redaction: %v", err)
 		}
 	}
-	for _, kind := range []string{Test, BackupSucceeded, BackupFailed, OffsiteSucceeded, OffsiteFailed, RestoreSucceeded, RestoreFailed, JobFailed, ServerStarted, ServerStopped, ServerCrashed, UpdateAvailable, UpdateSucceeded, UpdateFailed} {
+	for _, kind := range []string{Test, BackupSucceeded, BackupFailed, OffsiteSucceeded, OffsiteFailed, RestoreSucceeded, RestoreFailed, JobFailed, ServerStarted, ServerStopped, ServerCrashed, UpdateAvailable, UpdateSucceeded, UpdateFailed, StorageThreshold, ContentUpdatesAvailable, ContentUpdateSucceeded, ContentUpdateFailed} {
 		e := event()
 		e.Kind = kind
 		if err := e.Validate(); err != nil || eventMessage(kind) == "" {

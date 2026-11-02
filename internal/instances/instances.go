@@ -118,6 +118,29 @@ func (s *Service) Validate(i model.Instance) error {
 	if strings.ContainsAny(i.Root, "\r\n\x00") {
 		return errors.New("invalid instance directory")
 	}
+	for _, component := range strings.Split(filepath.ToSlash(i.Root), "/") {
+		lower := strings.ToLower(component)
+		if strings.HasPrefix(lower, ".nesc-") || strings.HasPrefix(lower, ".newempire-") {
+			return errors.New("internal recovery directories cannot be adopted as managed instances")
+		}
+	}
+	for _, reserved := range []string{s.Config.BackupDir, filepath.Join(s.Config.DataDir, "staging"), filepath.Join(s.Config.DataDir, "uploads")} {
+		if filepath.Clean(i.Root) == filepath.Clean(reserved) {
+			return errors.New("instance directory overlaps protected panel storage")
+		}
+		if _, err := Relative(i.Root, reserved); err == nil {
+			return errors.New("instance directory contains protected panel storage")
+		}
+		if _, err := Relative(reserved, i.Root); err == nil {
+			return errors.New("instance directory is inside protected panel storage")
+		}
+	}
+	if filepath.Clean(i.Root) == filepath.Clean(s.Config.DataDir) {
+		return errors.New("panel data directory cannot be adopted as an instance")
+	}
+	if _, err := Relative(i.Root, s.Config.DataDir); err == nil {
+		return errors.New("instance directory cannot contain the panel data directory")
+	}
 	root, err := s.OpenRoot(i.Root)
 	if err != nil {
 		return err
@@ -158,6 +181,26 @@ func (s *Service) OpenRoot(path string) (*os.Root, error) {
 	return nil, errors.New("instance directory is outside all administrator-allowlisted roots")
 }
 
+func (s *Service) OpenParent(path string) (*os.Root, string, error) {
+	for _, base := range append([]string{s.Config.InstanceDir}, s.Config.AdoptRoots...) {
+		rel, err := Relative(base, path)
+		if err != nil {
+			continue
+		}
+		root, err := os.OpenRoot(base)
+		if err != nil {
+			return nil, "", err
+		}
+		parent, err := root.OpenRoot(filepath.Dir(rel))
+		root.Close()
+		if err != nil {
+			return nil, "", err
+		}
+		return parent, filepath.Base(rel), nil
+	}
+	return nil, "", errors.New("instance parent is outside all administrator-allowlisted roots")
+}
+
 func (s *Service) CheckCollisions(ctx context.Context, root string, port, rconPort int) error {
 	all, err := s.List(ctx)
 	if err != nil {
@@ -173,9 +216,14 @@ func (s *Service) CheckCollisions(ctx context.Context, root string, port, rconPo
 		if _, err := Relative(root, other.Root); err == nil {
 			return errors.New("instance directories must not overlap")
 		}
+		candidate, err1 := os.Stat(root)
+		existing, err2 := os.Stat(other.Root)
+		if err1 == nil && err2 == nil && os.SameFile(candidate, existing) {
+			return errors.New("instance directory refers to an already registered directory")
+		}
 	}
 	for _, p := range []int{port, rconPort} {
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", p))
 		if err != nil {
 			return fmt.Errorf("port %d is already in use or unavailable", p)
 		}

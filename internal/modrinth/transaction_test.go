@@ -144,6 +144,36 @@ func TestHashMismatchAndTamperedStageNeverMutateOriginals(t *testing.T) {
 	}
 }
 
+func TestRuntimePermissionNormalizationDoesNotBreakContentRollback(t *testing.T) {
+	c := newCatalog()
+	old := c.add("A", "old", "old bytes")
+	root := testRoot(t)
+	installFixture(t, root, c, old)
+	next := c.add("A", "new", "new bytes")
+	service := NewService(c.client(t))
+	plan := mustPlan(t, service, root, Request{Target: testTarget})
+	stage := testRoot(t)
+	if err := service.Stage(context.Background(), stage, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Chmod("mods/"+old.Files[0].Filename, 0660); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := Apply(context.Background(), root, stage, plan)
+	if err != nil {
+		t.Fatal("safe pre-apply permission normalization invalidated content identity:", err)
+	}
+	if err := root.Chmod("mods/"+next.Files[0].Filename, 0660); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rollback(context.Background(), root, tx); err != nil {
+		t.Fatal("safe startup permission normalization prevented rollback:", err)
+	}
+	if readText(t, root, "mods/"+old.Files[0].Filename) != "old bytes" {
+		t.Fatal("old content was not restored")
+	}
+}
+
 func TestCommitFailureRecoversOriginalContent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission-failure fixture requires an unprivileged user")

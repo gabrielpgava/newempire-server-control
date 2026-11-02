@@ -9,20 +9,24 @@ import (
 )
 
 const (
-	Test             = "test"
-	BackupSucceeded  = "backup_succeeded"
-	BackupFailed     = "backup_failed"
-	OffsiteSucceeded = "offsite_succeeded"
-	OffsiteFailed    = "offsite_failed"
-	RestoreSucceeded = "restore_succeeded"
-	RestoreFailed    = "restore_failed"
-	JobFailed        = "job_failed"
-	ServerStarted    = "server_started"
-	ServerStopped    = "server_stopped"
-	ServerCrashed    = "server_crashed"
-	UpdateAvailable  = "update_available"
-	UpdateSucceeded  = "update_succeeded"
-	UpdateFailed     = "update_failed"
+	Test                    = "test"
+	BackupSucceeded         = "backup_succeeded"
+	BackupFailed            = "backup_failed"
+	OffsiteSucceeded        = "offsite_succeeded"
+	OffsiteFailed           = "offsite_failed"
+	RestoreSucceeded        = "restore_succeeded"
+	RestoreFailed           = "restore_failed"
+	JobFailed               = "job_failed"
+	ServerStarted           = "server_started"
+	ServerStopped           = "server_stopped"
+	ServerCrashed           = "server_crashed"
+	UpdateAvailable         = "update_available"
+	UpdateSucceeded         = "update_succeeded"
+	UpdateFailed            = "update_failed"
+	StorageThreshold        = "storage_threshold"
+	ContentUpdatesAvailable = "content_updates_available"
+	ContentUpdateSucceeded  = "content_update_succeeded"
+	ContentUpdateFailed     = "content_update_failed"
 )
 
 type Event struct {
@@ -76,6 +80,14 @@ func eventMessage(kind string) string {
 		return "The application update completed."
 	case UpdateFailed:
 		return "The application update failed. Review recovery instructions in the panel."
+	case StorageThreshold:
+		return "Free instance storage is below the configured threshold. Review capacity and verified backups."
+	case ContentUpdatesAvailable:
+		return "Compatible content updates are available. Review the plan in the panel."
+	case ContentUpdateSucceeded:
+		return "Content maintenance completed. Review the job for readiness details."
+	case ContentUpdateFailed:
+		return "Content maintenance failed. World progress was not automatically rolled back; review recovery diagnostics."
 	}
 	return ""
 }

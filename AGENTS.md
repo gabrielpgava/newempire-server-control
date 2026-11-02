@@ -24,6 +24,7 @@ This file is binding guidance for every coding agent contributing to this reposi
 - Prefer repository-local patterns and existing working code over wholesale rewrites.
 - Do not hard-code current Minecraft, Fabric, Java, or Go versions. Read authoritative upstream metadata and verify compatibility.
 - Module path is `github.com/gabrielpgava/newempire-server-control`. Shared domain types live in `internal/model`; domain packages must not import HTTP handlers. See `docs/integration-contract.md` for integration boundaries.
+- The executable entrypoint is `cmd/control`; `internal/api` integrates domain services, durable jobs, and authenticated HTTP routes. Native helpers use `internal/servicehelper`; the independent updater exchanges bounded request/report files through `internal/panelupdate`.
 - Runtime version choices come from Fabric and Mojang metadata. Go 1.27 is the verified build baseline; `.go-version` and `go.mod` are the build-toolchain authority.
 - The repository is licensed under PolyForm Shield 1.0.0 by the owner's explicit selection. Describe it as source-available, not OSI-approved open source.
 
@@ -76,6 +77,7 @@ No module is complete if its user-facing controls are nonfunctional or its failu
 - Update OpenAPI and end-user documentation alongside any API or workflow change.
 - Run repository-defined formatting, linting, security checks, migrations, frontend build, unit tests, and applicable integration tests before declaring work complete.
 - Record known risks and evidence of actual test execution. Never invent results.
+- `make check` and `make security` are the integrated automated gates; `make release-dry-run` builds unsigned-publication test artifacts using an ephemeral signing key and makes no GitHub writes. `bash scripts/test-sandbox.sh` runs Go race tests with read-only source/module mounts and no network; its private Docker volume is only for the helper's ACL fixture because Docker tmpfs may not support POSIX ACLs. The deployed application still requires ACL-capable storage.
 
 ## Parallel agents and worktrees
 

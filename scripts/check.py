@@ -13,10 +13,10 @@ def node_version_file(root=pathlib.Path('.')):
 
 
 def openapi_file(root=pathlib.Path('.')):
-    files = [root / f'docs/openapi.{ext}' for ext in ('json', 'yaml', 'yml')]
+    files = [root / f'docs/api/openapi.{ext}' for ext in ('json', 'yaml', 'yml')]
     found = [path for path in files if path.is_file()]
     if len(found) != 1:
-        raise ValueError('Exactly one docs/openapi.json, .yaml, or .yml is required')
+        raise ValueError('Exactly one docs/api/openapi.json, .yaml, or .yml is required')
     return found[0]
 
 

@@ -71,7 +71,7 @@ func TestExclusiveJobsIdempotencyAndCrashRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	restartCtx, stop := context.WithCancel(context.Background())
-	stop()
+	defer stop()
 	if err := e.Start(restartCtx, 0); err != nil {
 		t.Fatal(err)
 	}
