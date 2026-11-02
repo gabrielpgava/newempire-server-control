@@ -155,6 +155,10 @@ func deliveryFailure(ctx context.Context, stage string, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	// A socket deadline can expire before the context timer publishes its error.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
 	failure := &DeliveryError{stage: stage, Retryable: true}
 	var reply *textproto.Error
 	if errors.As(err, &reply) {

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/mail"
 	"net/textproto"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +227,51 @@ func TestSMTPCancellationAndUnverifiedConnections(t *testing.T) {
 	}
 	if _, err := NewWithSMTPDialer(smtpConfig(), nil); err == nil {
 		t.Fatal("nil SMTP dialer accepted")
+	}
+}
+
+type unpublishedDeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c unpublishedDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func TestSMTPDeadlineBeforeContextCancellation(t *testing.T) {
+	timeout := &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	ctx := unpublishedDeadlineContext{Context: context.Background(), deadline: time.Now().Add(-time.Second)}
+	if ctx.Err() != nil {
+		t.Fatal("fixture already published context cancellation")
+	}
+	if err := deliveryFailure(ctx, "SMTP greeting", timeout); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("socket deadline lost context deadline: %v", err)
+	}
+
+	for _, ctx := range []context.Context{
+		context.Background(),
+		unpublishedDeadlineContext{Context: context.Background(), deadline: time.Now().Add(time.Hour)},
+	} {
+		for _, test := range []struct {
+			err       error
+			code      int
+			retryable bool
+		}{
+			{timeout, 0, true},
+			{&textproto.Error{Code: 451, Msg: "smtp-secret-password temporary failure"}, 451, true},
+			{&textproto.Error{Code: 535, Msg: "smtp-secret-password authentication failed"}, 535, false},
+		} {
+			err := deliveryFailure(ctx, "SMTP greeting", test.err)
+			var failure *DeliveryError
+			if !errors.As(err, &failure) || failure.Code != test.code || failure.Retryable != test.retryable || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("live context changed delivery classification or redaction: %v", err)
+			}
+		}
+	}
+
+	ctxCanceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := deliveryFailure(ctxCanceled, "SMTP greeting", timeout); !errors.Is(err, context.Canceled) {
+		t.Fatalf("explicit context cancellation lost: %v", err)
 	}
 }
 
