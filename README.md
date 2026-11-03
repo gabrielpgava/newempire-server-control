@@ -4,6 +4,35 @@ A browser-based control panel for headless Minecraft Java/Fabric servers. Go ser
 
 **Status: evaluation-stage software.** Install only an authenticatable build listed in the [official GitHub Releases](https://github.com/gabrielpgava/newempire-server-control/releases). Release availability is separate from the [acceptance checks](docs/acceptance.md) required before use with valuable worlds; a public repository or published asset is not evidence of a tested deployment.
 
+## Verified one-line installation
+
+**Requires an actual published signed release:** if the official Releases page
+has none, this command cannot install the application. Do not substitute an
+unsigned local build. Select a published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
+administrator-approved absolute Java executable path before running this line:
+
+```sh
+( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; ip=$(timeout 10 /usr/bin/python3 -I -c "import ipaddress,socket,sys; a=socket.getaddrinfo(\"raw.githubusercontent.com\",443,type=socket.SOCK_STREAM); a and all(ipaddress.ip_address(x[4][0]).is_global for x in a) or sys.exit(\"Non-public bootstrap destination\"); p=ipaddress.ip_address(a[0][4][0]); print(\"[\"+str(p)+\"]\" if p.version==6 else str(p))"); status=$(curl --disable --fail --silent --show-error --proto "=https" --tlsv1.2 --noproxy "*" --resolve "raw.githubusercontent.com:443:$ip" --connect-timeout 10 --max-time 30 --max-filesize 65536 --write-out "%{http_code}" https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"); [ "$status" = 200 ]; printf "%s  %s\n" 423d95deb5bde6041a127a8ef441cac61639ef5aae64b607e1f290c869e91c91 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
+```
+
+Requires the [Linux/systemd prerequisites](docs/install/linux-systemd.md), curl,
+`sha256sum`, `mktemp`, coreutils `timeout`, and root administration through sudo.
+No Go or Node.js is needed on the destination. The command verifies the bootstrap's SHA-256 **before
+execution**; that bootstrap verifies nine deployment files pinned to an immutable
+official source revision, then uses the existing pinned-key signed-release
+installer. The initial curl pins a validated public address, bypasses environment
+proxies and requires HTTP 200; redirects are rejected. Copy the command/checksum
+from reviewed official documentation.
+
+Installation enables `new-empire-control.service` and reports the configured
+dashboard URL, default **http://127.0.0.1:8080** / **http://localhost:8080**, and
+detected private interface IPs. Those IPs are informational, **not remotely
+reachable dashboard listeners**; the default remains loopback-only. Use an SSH
+tunnel or a configured HTTPS reverse proxy for remote access. On an interactive
+terminal it also shows the protected **first-owner setup code** for creating your
+first login. Redirected output never reads or prints that code; it gives a local
+read command instead. No Minecraft instance is started.
+
 ## What is in the project
 
 - Token-protected first-owner setup, password sessions, TOTP, roles, and explicit instance grants.
@@ -50,35 +79,6 @@ go build -o new-empire-control ./cmd/control
 `doctor` reports configuration, database integrity when initialized, and whether the helper exists. For initialized state it requires the panel to be stopped and takes `panel.lock`; it never initializes an empty database or runs migrations. Helper existence is not proof that systemd permissions, firewall isolation, or Minecraft readiness work.
 
 ## Native Linux deployment
-
-### Verified one-line installation
-
-**Requires an actual published signed release:** if the official Releases page
-has none, this command cannot install the application. Do not substitute an
-unsigned local build. Select a published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
-administrator-approved absolute Java executable path before running this line:
-
-```sh
-( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; ip=$(timeout 10 /usr/bin/python3 -I -c "import ipaddress,socket,sys; a=socket.getaddrinfo(\"raw.githubusercontent.com\",443,type=socket.SOCK_STREAM); a and all(ipaddress.ip_address(x[4][0]).is_global for x in a) or sys.exit(\"Non-public bootstrap destination\"); p=ipaddress.ip_address(a[0][4][0]); print(\"[\"+str(p)+\"]\" if p.version==6 else str(p))"); status=$(curl --disable --fail --silent --show-error --proto "=https" --tlsv1.2 --noproxy "*" --resolve "raw.githubusercontent.com:443:$ip" --connect-timeout 10 --max-time 30 --max-filesize 65536 --write-out "%{http_code}" https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"); [ "$status" = 200 ]; printf "%s  %s\n" 423d95deb5bde6041a127a8ef441cac61639ef5aae64b607e1f290c869e91c91 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
-```
-
-Requires the [Linux/systemd prerequisites](docs/install/linux-systemd.md), curl,
-`sha256sum`, `mktemp`, coreutils `timeout`, and root administration through sudo.
-No Go or Node.js is needed on the destination. The command verifies the bootstrap's SHA-256 **before
-execution**; that bootstrap verifies nine deployment files pinned to an immutable
-official source revision, then uses the existing pinned-key signed-release
-installer. The initial curl pins a validated public address, bypasses environment
-proxies and requires HTTP 200; redirects are rejected. Copy the command/checksum
-from reviewed official documentation.
-
-Installation enables `new-empire-control.service` and reports the configured
-dashboard URL, default **http://127.0.0.1:8080** / **http://localhost:8080**, and
-detected private interface IPs. Those IPs are informational, **not remotely
-reachable dashboard listeners**; the default remains loopback-only. Use an SSH
-tunnel or a configured HTTPS reverse proxy for remote access. On an interactive
-terminal it also shows the protected **first-owner setup code** for creating your
-first login. Redirected output never reads or prints that code; it gives a local
-read command instead. No Minecraft instance is started.
 
 ### Layout and exposure
 
