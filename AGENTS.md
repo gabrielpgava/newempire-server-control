@@ -51,7 +51,7 @@ Full-tree restores persist `restore-pending:<instanceID>` before the data swap. 
 - Defend third-party downloads and URLs against SSRF and redirection into private networks; inspect source metadata and hashes.
 - Keep secrets out of logs, HTTP responses, and repository history; configure credential encryption/recovery.
 - Never allow unsigned or unverified panel auto-updates. Verify the expected official release identity, signature/attestation, checksum, architecture, and version policy.
-- Build the secret-bearing release signer from a fresh exact-SHA checkout in the protected publication job, without running npm there. Never execute a signer transferred from unsigned preparation.
+- Build the secret-bearing release signer locally from the verified clean exact-SHA source, without exposing the key to npm, tests or unsigned preparation. Never execute an unverified transferred signer.
 - Never grant a fork pull-request workflow write access to production credentials or GitHub release permissions.
 
 ## Required modules and definition of functional completeness
@@ -68,7 +68,7 @@ Full-tree restores persist `restore-pending:<instanceID>` before the data swap. 
 - Jobs and scheduling: durable state, exclusive per-instance mutation locks, retries, maintenance windows, crash recovery, and truthful progress.
 - Monitoring, diagnostics, actionable notifications, and mobile-friendly UI.
 - Application GitHub Release self-updater with verified download, independent updater process, service restart limited to panel, and health-checked rollback.
-- Local quality/security verification, reproducible installable assets, verified releases, and full English documentation. Automatic CI/publication is disabled; GitHub Actions stays disabled except for an explicitly owner-authorized manual release run.
+- Local quality/security verification, reproducible installable assets, verified releases, and full English documentation. All checks, builds, signing and publication run locally; do not trigger GitHub Actions or cloud pipelines.
 
 No module is complete if its user-facing controls are nonfunctional or its failure path is untested.
 
@@ -83,7 +83,7 @@ No module is complete if its user-facing controls are nonfunctional or its failu
 - Run repository-defined formatting, linting, security checks, migrations, frontend build, unit tests, and applicable integration tests before declaring work complete.
 - Record known risks and evidence of actual test execution. Never invent results.
 - `make check` and `make security` are the integrated automated gates; `make release-dry-run` builds unsigned-publication test artifacts using an ephemeral signing key and makes no GitHub writes. `bash scripts/test-sandbox.sh` runs Go race tests with read-only source/module mounts and no network; its private Docker volume is only for the helper's ACL fixture because Docker tmpfs may not support POSIX ACLs. The deployed application still requires ACL-capable storage.
-- Run checks locally and record their results. The owner-approved `.github/workflows/release.yml` is manual-only, not CI or automatic publication. Each run requires explicit budget authorization; enable Actions only for that run and disable it afterward, including on failure. Never introduce automatic triggers or paid services without new approval. Preserve branch/environment protections; any owner-authorized one-run exception must be backed up, narrowly applied and immediately restored.
+- Run checks and releases locally and record their results. Preserve the unused manual-only `.github/workflows/release.yml` and remote settings; never enable or dispatch it. Before any push, merge, tag or release, verify that no cloud workflow would be triggered; stop if this cannot be established. Preserve branch/environment protections and report blockers rather than bypassing them. A future cloud run requires separate explicit owner authorization, including its cost.
 
 ## Single development branch and workspace
 
@@ -106,7 +106,7 @@ A significant feature includes a new complete module, a substantial user-visible
 - `feat!:` or `BREAKING CHANGE:` must lead to a MAJOR SemVer bump.
 - A significant feature PR must have a conventional release-producing title/commit and an appropriate `release:feature` label or equivalent maintainer-reviewed marker.
 - Before merging: pass local `make check` and `make security`, update tests, complete English documentation, add changelog entries, and verify required migrations.
-- After merging: a maintainer must arrange trusted publication of its version tag, Linux amd64 and arm64 assets with embedded UI, machine-readable metadata, checksums, authenticated signatures/provenance, and English release notes through the explicitly authorized protected-main manual workflow. Production signing stays in the protected `release` environment; never extract the secret, spoof workflow context, rotate the trust root or substitute unsigned candidates when publication fails. A retry needs separate run authorization.
+- After merging: a maintainer must build, sign and publish locally from clean protected-main source: version tag, Linux amd64 and arm64 assets with embedded UI, machine-readable metadata, checksums, authenticated local provenance and English release notes. Use `sign-local`, `verify-local` and the explicit `--local` publisher; GitHub is artifact storage, not the builder. Keep the private key outside the repository and scoped to signing only. Never extract cloud secrets, spoof workflow context, replace a trust root without explicit owner authorization, or substitute unsigned candidates when publication fails. An exact unpublished draft may be resumed explicitly without overwriting assets.
 - Verify the new release can be discovered and consumed by the application self-updater. If publication is blocked, the feature is NOT fully delivered until the blocker is resolved or accurately reported.
 - Never publish incomplete/untested code just to satisfy a schedule. Never assert that a GitHub Release exists unless it actually exists.
 - Releases are built from trusted protected branches, with minimal permission scopes and safeguards against concurrency, duplicate tags, and release asset mismatch.
@@ -114,11 +114,11 @@ A significant feature includes a new complete module, a substantial user-visible
 ## Release and self-update acceptance
 
 1. Local gates reject broken builds, failing tests, invalid release metadata, and missing mandatory files; maintainers review the recorded results before merging.
-2. A complete significant `feat:` merge requires a new valid GitHub release on the stable channel; manual workflow availability or a configured secret is not proof of successful publication.
+2. A complete significant `feat:` merge requires a new valid GitHub release on the stable channel; available tooling or a configured key is not proof of successful publication.
 3. Every release contains authenticatable assets for supported host architectures, and the update manifest matches them.
 4. The panel can check an official GitHub release, stage it, verify it, update only itself, and recover automatically from failed post-update health checks.
 5. A panel update must not restart Minecraft or modify world and content files.
-6. If publication is blocked by permissions, secrets, or disabled automation, report the exact blocker and preserve build/release verification; never fabricate publication.
+6. If publication is blocked by permissions, signing or protected-main integration, report the exact blocker and preserve local build/release verification; never fabricate publication or enable cloud automation as a workaround.
 
 ## Documentation checklist
 

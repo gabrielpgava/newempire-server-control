@@ -13,7 +13,7 @@ New Empire Server Control is a Go modular monolith with a separately built React
 - `internal/fabric`, `internal/modrinth`, `internal/modpacks`: authoritative runtime metadata and hash-identified server-side Fabric content. Paper/Purpur plugins are not supported.
 - `internal/storage`, `internal/notifications`: explicitly configured offsite replication and outbound notification adapters. Credentials are not returned by APIs.
 - `internal/updates`: signed release discovery/staging and independent panel-only application with health-checked rollback.
-- `web`: embedded UI; `deploy`: installation/service examples; `scripts/check.sh`: local validation. Automatic CI/publishing is disabled; the normally-disabled manual release workflow requires explicit per-run owner authorization.
+- `web`: embedded UI; `deploy`: installation/service examples; root `install.sh`: short signed-release installation entrypoint; `scripts/check.sh`: local validation. Checks, builds, signing and publication run locally; the preserved manual workflow is unused.
 
 ## Transactions and recovery
 

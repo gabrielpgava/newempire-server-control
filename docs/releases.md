@@ -4,20 +4,18 @@ This repository is source-available under PolyForm Shield 1.0.0. A public source
 repository, passing unit tests, or a draft is not evidence of a published release
 or complete product acceptance. Check the actual release links.
 
-## Normally disabled; manual publication only
+## Strictly local publication
 
-Automatic CI and release publication remain disabled to avoid runner charges.
-The owner approved `.github/workflows/release.yml` with **workflow_dispatch only**.
-Each run needs explicit owner authorization, including its possible runner cost;
-merges and pushes do not start it. Run validation/security locally before merging.
-No reusable CI job, push/PR trigger or paid publication service is introduced.
+Validation, security checks, compilation, signing and publication run locally.
+GitHub stores source and finished artifacts; do not enable, dispatch or otherwise
+trigger Actions or cloud pipelines. The preserved `.github/workflows/release.yml`
+is manual-only and unused. Legacy workflow verification remains compatible but
+is not the local publication path.
 
-A maintainer must enable Actions only for the authorized release run, monitor it
-and disable Actions afterward, including on failure. The workflow has no
-administrative token to change repository settings or protection rules itself.
-Preserve PR/code-owner/latest-push approval and protected-branch release rules.
-Any separately owner-authorized one-merge or one-run approval exception must be
-backed up, narrowly applied and immediately restored; it is not reusable.
+Before any push, merge, tag or release, inspect the tracked workflow triggers and
+stop if cloud execution could occur or cannot be ruled out. Preserve independent
+PR/code-owner/latest-push approval and protected-main rules. A blocked merge is
+not permission to bypass a safeguard or publish a different source revision.
 
 ## Local validation and release preparation
 
@@ -50,49 +48,67 @@ the SBOM, signs and verifies locally, and never creates a tag or contacts the
 release API. Dry-run assets are not official update assets and cannot be
 verified with the production trust root. No private key is retained.
 
-## Authorized manual publication
+## Authorized local publication
 
 1. Review `make check`, `make security`, script/deployment tests and the local
    distro build for the exact consolidated source. Integrate `dev` into protected
    `main`; verify the resulting tree and commit before publication.
-2. Record the original Actions permissions and release environment rules. Confirm
-   no other run is active, only the manual release workflow will be enabled, and
-   the `release` environment restricts deployment to protected branches.
-3. Enable Actions and the release workflow only for this explicitly authorized
-   attempt, then dispatch **once** at current `main`:
+2. In the existing checkout, select the clean integrated `main`, verify official
+   origin and protected remote-main identity, and create a read-only live plan:
+
+    ```sh
+    python3 -B scripts/release.py plan --live --local > dist/local-plan.json
+    ```
+
+   Create the ignored `dist/` parent first if absent. `plan --live --local` rejects
+   dirty/non-main/forked sources, unprotected or moved remote main and workflow
+   triggers other than the explicitly recognized manual-only form. It does not
+   impersonate Actions or require `GITHUB_*` environment variables.
+3. Read `version` and `commit` from the plan as `VERSION` and `SHA`. Build unsigned
+   candidates without the signing key, then build the signer from this same
+   clean verified source. Use a new output directory for every attempt:
 
    ```sh
-   gh workflow run release.yml --ref main -f bump=auto -f channel=stable -f retry_tag=
+   make dist VERSION="$VERSION" OUT="dist/release-$VERSION"
+   go build -mod=readonly -trimpath -o bin/release-tool ./scripts/release
    ```
 
-4. Preparation checks official protected-main identity, computes the version and
-   builds both packages/SBOM with pinned tools. It has read-only permissions and
-   no signing secret. Only this run's plan and unsigned assets pass to publication;
-   no executable signer is transferred.
-5. Approve the exact run's protected `release` deployment. Publication has only
-   contents/attestations/OIDC write permissions. It builds the signer from its fresh
-   exact-SHA checkout without running npm. That signer receives `RELEASE_SIGNING_KEY`
-   in its own step, requires the pinned public identity,
-   and creates the signature/checksums. GitHub attests every payload.
-6. The existing publisher verifies signatures/provenance before creating a
-   draft, uploads without overwriting, downloads all assets and re-verifies
-   them, checks current main/tag identity, then publishes **last** and verifies
-   stable latest discovery. Record the actual release URL and exact source SHA.
-7. Restore any approved temporary environment exception immediately after
-   approval. Disable Actions when the run completes or fails, read back those
-   settings, and retain non-secret evidence. Use a `finally`/trap-controlled
-   administrative session; do not leave controls weakened after an interruption.
+4. Verify the private key file's ownership/permissions and the executable/source
+   identity before exposing the key. Scope `RELEASE_SIGNING_KEY` to the signer
+   process only; never export it into npm, tests or the publisher environment.
+   `SIGNING_KEY_FILE` is an administrator-selected protected local file, not a
+   downloaded secret. In a trusted local signing session:
 
-`scripts/release.py` still requires real protected-main workflow context and
-GitHub OIDC-backed provenance for the exact SHA. Do not spoof that context or
-call its live commands as a local publishing shortcut. A failed run consumes
-its authorization: investigate the precise failure before asking for another
-run. Inspect the actual release and tag state: a failure before draft creation
-leaves no draft, while a lost final response can leave an already published
-release. `retry_tag` can resume only the exact matching unpublished draft, needs
-separate authorization, and never permits overwriting an asset or published tag.
-Never invent provenance, rotate the trust root, delete a tag to conceal a
-failure, or publish unsigned packages to satisfy the release policy.
+   ```sh
+   RELEASE_SIGNING_KEY="$(cat "$SIGNING_KEY_FILE")" bin/release-tool sign-local \
+     -dir "dist/release-$VERSION" -version "$VERSION" -commit "$SHA"
+   bin/release-tool verify-local \
+     -dir "dist/release-$VERSION" -version "$VERSION" -commit "$SHA"
+   ```
+
+   The signer validates the pinned public identity, signs the updater manifest
+   and deterministic source-bound local provenance, and verifies every payload.
+   Keep build/test execution isolated and network-disabled; only the reviewed
+   publication client needs credentials/network access for the GitHub API.
+5. Publish using the explicit local path:
+
+   ```sh
+   python3 -B scripts/release.py publish --local --plan dist/local-plan.json \
+     --assets "dist/release-$VERSION" --tool bin/release-tool
+   ```
+
+   The publisher verifies signatures before creating a draft, uploads without
+   overwriting, downloads every asset with bounds and re-verifies it, rechecks
+   main/tag identity, publishes **last**, then verifies stable latest discovery.
+   Record the actual release URL and exact source SHA. Do not enable Actions.
+
+Inspect actual release/tag state after any failure or lost response: publication
+may have succeeded even if the client response was lost. An explicit
+`RELEASE_RETRY_TAG=vX.Y.Z` live local plan can resume only its exact matching
+unpublished draft. Every local asset, including deterministic provenance, must
+match; retries cannot overwrite assets or a published tag. Never invent
+provenance, replace a key without owner authorization, delete a tag to conceal a
+failure, or substitute unsigned packages.
 
 The committed base64 32-byte Ed25519 public key in
 `deploy/release-public-key.txt` remains the trust root; the CLI linker field is
@@ -102,6 +118,12 @@ by public key), not PEM or a 32-byte seed. It reconstructs the key and requires
 its public key to match the trust root. Keep recovery copies outside the
 repository; never log, upload or include a private key in an archive or command
 argument. Missing, malformed or mismatched keys remain publication blockers.
+
+The owner explicitly replaced the initial unreleased key on 2026-11-03. Current
+raw-public-key SHA-256 is
+`d7ab48a9fa4414e04027255f140f6677a451e868470e14ef3c64770420d81a7f`.
+Old-key evaluation installations require a reviewed manual migration; this is
+not automatic key rotation or authorization for future replacements.
 
 The panel's signed-update checks are unchanged. A present secret is not proof
 that it contains a matching key; signing failure must leave publication stopped.
@@ -132,8 +154,8 @@ and applicable updater acceptance are verified.
 For read-only planning, `RELEASE_BUMP=auto|patch|minor|major` sets a minimum bump,
 never a lower one than the commits require. `RELEASE_CHANNEL=stable|beta|rc`
 selects stable or the next `X.Y.Z-beta.N` / `X.Y.Z-rc.N` sequence. These settings
-do not publish anything locally. The manual workflow exposes the same choices;
-an explicit draft retry still requires separate owner run authorization.
+do not publish anything by themselves. A retry must explicitly select the exact
+unpublished draft; it never authorizes a cloud run or changed assets.
 
 ## Assets and updater contract
 
@@ -141,10 +163,11 @@ Every release contains:
 
 - `new-empire-control_<version>_linux_amd64.tar.gz`
 - `new-empire-control_<version>_linux_arm64.tar.gz`
-- `documentation.tar.gz` (tracked LICENSE, README, docs and deployment examples)
+- `documentation.tar.gz` (tracked LICENSE, README, root installer, docs and deployment examples)
 - `sbom.cdx.json` (CycloneDX 1.6: actual Go build-info dependencies from **both**
   binaries, the Go standard library, and resolved production npm lock packages)
-- `release.json`, `release.json.sig`, `checksums.txt`, `provenance.jsonl`
+- `release.json`, `release.json.sig`, `checksums.txt`
+- `provenance.json`, `provenance.json.sig` (locally signed source/subject evidence)
 
 Each binary archive contains **exactly one regular file** named
 `new-empire-control`, mode `0755`, with no directory prefix, links or extra files.
@@ -172,19 +195,24 @@ cannot attest itself. Checksums alone are not an authenticity check. The SBOM is
 a dependency inventory, not a claim that every component is vulnerability-free
 or that a dependency graph/license audit has been performed.
 
-## Verify workflow provenance
+## Verify local provenance
 
-The manual workflow retains the original trusted workflow path. Replace `SHA`
-with the expected protected-main commit and verify each payload against the
-downloaded bundle; this command is not evidence that a release already exists:
+Download all nine assets into a new directory. With a signer/verifier built from
+independently reviewed source and the pinned public key, supply the expected
+version and protected-main SHA:
 
 ```sh
-gh attestation verify new-empire-control_VERSION_linux_amd64.tar.gz \
-  --repo gabrielpgava/newempire-server-control --bundle provenance.jsonl \
-  --signer-workflow gabrielpgava/newempire-server-control/.github/workflows/release.yml \
-  --signer-digest SHA --source-digest SHA --source-ref refs/heads/main \
-  --deny-self-hosted-runners
+bin/release-tool verify-local -dir DOWNLOADED_ASSET_DIRECTORY \
+  -version VERSION -commit SHA
 ```
+
+`provenance.json` is deterministic compact JSON with schema `1`, the official
+repository, builder `local`, full source commit, version, and seven sorted
+subjects (name, size and SHA-256), including `checksums.txt`.
+`provenance.json.sig` authenticates its exact bytes with the same Ed25519 trust
+root. This binds the signed release to a maintainer's source claim; it is **not**
+GitHub OIDC/runner attestation or independent proof of a reproducible build.
+The updater still consumes the unchanged signed `release.json` contract.
 
 ## Pinned local tooling
 

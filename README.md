@@ -4,25 +4,25 @@ A browser-based control panel for headless Minecraft Java/Fabric servers. Go ser
 
 **Status: evaluation-stage software.** Install only an authenticatable build listed in the [official GitHub Releases](https://github.com/gabrielpgava/newempire-server-control/releases). Release availability is separate from the [acceptance checks](docs/acceptance.md) required before use with valuable worlds; a public repository or published asset is not evidence of a tested deployment.
 
-## Verified one-line installation
+## One-line installation
 
-**Requires an actual published signed release:** if the official Releases page
-has none, this command cannot install the application. Do not substitute an
-unsigned local build. Select a published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
-administrator-approved absolute Java executable path before running this line:
+On a supported Linux/systemd host with a compatible Java already installed:
 
 ```sh
-( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; ip=$(timeout 10 /usr/bin/python3 -I -c "import ipaddress,socket,sys; a=socket.getaddrinfo(\"raw.githubusercontent.com\",443,type=socket.SOCK_STREAM); a and all(ipaddress.ip_address(x[4][0]).is_global for x in a) or sys.exit(\"Non-public bootstrap destination\"); p=ipaddress.ip_address(a[0][4][0]); print(\"[\"+str(p)+\"]\" if p.version==6 else str(p))"); status=$(curl --disable --fail --silent --show-error --proto "=https" --tlsv1.2 --noproxy "*" --resolve "raw.githubusercontent.com:443:$ip" --connect-timeout 10 --max-time 30 --max-filesize 65536 --write-out "%{http_code}" https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"); [ "$status" = 200 ]; printf "%s  %s\n" 423d95deb5bde6041a127a8ef441cac61639ef5aae64b607e1f290c869e91c91 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
+curl -fsSL https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/install.sh | bash
 ```
 
-Requires the [Linux/systemd prerequisites](docs/install/linux-systemd.md), curl,
-`sha256sum`, `mktemp`, coreutils `timeout`, and root administration through sudo.
-No Go or Node.js is needed on the destination. The command verifies the bootstrap's SHA-256 **before
-execution**; that bootstrap verifies nine deployment files pinned to an immutable
-official source revision, then uses the existing pinned-key signed-release
-installer. The initial curl pins a validated public address, bypasses environment
-proxies and requires HTTP 200; redirects are rejected. Copy the command/checksum
-from reviewed official documentation.
+The installer requests sudo, selects the latest signed stable release, discovers
+the trusted Java executable, verifies the pinned release signature/hash and host
+architecture, and installs the panel service. No Go or Node.js is needed on the
+destination. See the [prerequisites and explicit/offline options](docs/install/linux-systemd.md).
+If no signed stable release exists, installation stops; there is no unsigned fallback.
+
+**Trust warning:** this command executes the current official GitHub script.
+Download and review it first if that trust model is unsuitable. The script checks
+its bootstrap checksum and nine immutable-source deployment files before using
+the signed-release installer, but those later checks cannot authenticate a
+malicious replacement of the initial script itself.
 
 Installation enables `new-empire-control.service` and reports the configured
 dashboard URL, default **http://127.0.0.1:8080** / **http://localhost:8080**, and
@@ -155,7 +155,7 @@ Read [AGENTS.md](AGENTS.md) before contributing. Keep code, tests, English docum
 
 Run `make check` and `make security` locally. `make build` creates the host binary; `make dist VERSION=0.0.0-dev.1 OUT=dist/local-evaluation` creates unsigned Linux amd64/arm64 packages with embedded UI and an SBOM from clean committed source. These are evaluation candidates, not official installation/update assets. `make release-plan` previews the next version without publishing.
 
-Automatic CI and releases remain disabled. The [manual release workflow](docs/releases.md) requires explicit owner authorization for each run, protected-main source, environment approval, signing and provenance; GitHub Actions must be disabled again when it finishes, including on failure.
+All checks, compilation, signing and [release publication](docs/releases.md) run locally. GitHub stores source and finished artifacts; no workflow or cloud runner is used. Publication requires clean protected-main source, the matching local signing key, signed source-bound provenance and verified asset read-back.
 
 The required release output includes Linux amd64/arm64 binaries with the embedded UI, machine-readable metadata, checksums, and authenticated signatures/provenance. Signing configuration, publication, self-update discovery, and a real-host rollback drill are release gates, not assumed successes. Until a release is actually published, use source builds for evaluation only.
 

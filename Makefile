@@ -23,7 +23,7 @@ security:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 	npm --prefix web audit --omit=dev --audit-level=low
 
-# Unsigned local candidates only; production signing stays in the release environment.
+# Unsigned local candidates only; local production signing is a separate step.
 dist:
 	@test -n "$(VERSION)" || { echo 'VERSION is required (for example: make dist VERSION=0.0.0-dev.1)' >&2; exit 1; }
 	python3 -B scripts/release.py check-output --output "$(OUT)"

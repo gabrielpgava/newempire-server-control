@@ -33,10 +33,10 @@
 
 **Interfaces:** `deploy/install.py` keeps explicit `--version`, repeated `--java`, and offline input flags; omitted version selects latest stable, omitted Java discovers an installed trusted runtime. `install.sh` fetches a complete bootstrap into private temporary storage before executing it.
 
-- [ ] Add behavioral tests for pipe execution/download failure/sudo, installed Java discovery and absence, stable latest selection and malformed/prerelease versions.
-- [ ] Run changed tests in the local sandbox and observe missing-behavior failures.
-- [ ] Implement the wrapper and minimal installer defaults, retaining all existing safety checks.
-- [ ] Run all deployment tests; commit with a `feat:` Conventional Commit and refresh immutable bootstrap pins against the committed deployment sources.
+- [x] Add behavioral tests for pipe execution/download failure/sudo, installed Java discovery and absence, stable latest selection and malformed/prerelease versions.
+- [x] Run changed tests in the local sandbox and observe missing-behavior failures.
+- [x] Implement the wrapper and minimal installer defaults, retaining all existing safety checks.
+- [x] Run all deployment tests; commit with a `feat:` Conventional Commit and refresh immutable bootstrap pins against the committed deployment sources.
 
 ### Task 2: Local signing and publication
 
@@ -44,10 +44,10 @@
 
 **Interfaces:** Preserve existing cloud-only commands for the unused workflow; add explicit local plan/publication and local signing/verification modes. Signed local provenance binds repository, full source commit, version, and all existing payloads including `checksums.txt`.
 
-- [ ] Add tests rejecting a fork/dirty/non-main/moved/unprotected local source, invalid local provenance, corrupt payloads, and mismatched retries before publication.
-- [ ] Observe these tests fail in the local sandbox.
-- [ ] Implement local guards and signed provenance using the pinned key and existing manifest verification; keep draft/read-back and latest checks.
-- [ ] Run all release tests, including legacy workflow safety tests; commit the verified changes.
+- [x] Add tests rejecting a fork/dirty/non-main/moved/unprotected local source, invalid local provenance, corrupt payloads, and mismatched retries before publication.
+- [x] Observe these tests fail in the local sandbox.
+- [x] Implement local guards and signed provenance using the pinned key and existing manifest verification; keep draft/read-back and latest checks.
+- [x] Run all release tests, including legacy workflow safety tests; commit the verified changes.
 
 ### Task 3: Documentation, gates, and native candidates
 
@@ -55,7 +55,7 @@
 
 **Interfaces:** Document `curl -fsSL https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/install.sh | bash`; retain advanced/offline instructions and initial-script trust warning. Publication consumes the exact clean protected-main source and a locally available official key.
 
-- [ ] Update English documentation and local-only engineering policy; record outstanding real-host acceptance.
+- [x] Update English documentation and local-only engineering policy; record outstanding real-host acceptance.
 - [ ] Run local `make check`, `make security`, frontend build/tests, deployment/release tests, migration/race tests, and release dry-run where sandbox/dependencies permit; record exact failures or blockers.
 - [ ] Commit and obtain a fresh read-only whole-change review; fix important findings with RED→GREEN evidence.
 - [ ] Compute the conventional version and build Linux amd64/arm64 candidates with embedded UI from clean sources; verify archive/SBOM/metadata.
