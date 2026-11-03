@@ -34,8 +34,8 @@ DATA = "/var/lib/new-empire-control"
 MANAGED = "/srv/new-empire/instances"
 HOSTS = {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
 # The trust root is part of this reviewed installer, never downloaded with assets.
-PINNED_KEY = "DVI1QlV02lloZudVLPo64ZEOjQiEQR5PKyMlA+eVdG8="
-PINNED_KEY_SHA256 = "dd6804fd279cc3935f9dc3669dc900d81f7e1d0a1382b67f007568a615e5bd7f"
+PINNED_KEY = "5jtZuBvFVWvMMHZo5VCuP98GEOt1uxmzvSF+rBzzQlM="
+PINNED_KEY_SHA256 = "d7ab48a9fa4414e04027255f140f6677a451e868470e14ef3c64770420d81a7f"
 
 
 def command(*args):

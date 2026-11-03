@@ -16,7 +16,7 @@
 - English-only code, errors, documentation, and release notes; no new dependency.
 - Supported deployment targets remain Linux/systemd amd64 and arm64.
 - No workflow or cloud runner runs. Preserve existing workflows and GitHub settings.
-- No trust-root rotation, unsigned publication, fake Actions context, or extraction of cloud secrets.
+- Only the owner's explicit initial trust-root replacement is authorized; no unsigned publication, fake Actions context, or extraction of cloud secrets.
 - Keep unsigned candidates and report any signing or protected-main integration blocker.
 
 ## Review Focus
@@ -40,7 +40,7 @@
 
 ### Task 2: Local signing and publication
 
-**Files:** Modify `scripts/release/main.go`, `scripts/release/main_test.go`, `scripts/release.py`, and `scripts/release_test.py`.
+**Files:** Modify `scripts/release/main.go`, `scripts/release/main_test.go`, `scripts/release.py`, and `scripts/release_test.py`; synchronize the owner-selected public key across deployment files and the CLI, then refresh immutable bootstrap pins.
 
 **Interfaces:** Preserve existing cloud-only commands for the unused workflow; add explicit local plan/publication and local signing/verification modes. Signed local provenance binds repository, full source commit, version, and all existing payloads including `checksums.txt`.
 

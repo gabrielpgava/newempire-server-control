@@ -337,6 +337,7 @@ class ReleaseVerificationTests(unittest.TestCase):
 
     def test_pinned_key_files_and_fingerprint(self):
         raw = base64.b64decode((HERE / "release-public-key.txt").read_text().strip(), validate=True)
+        self.assertEqual(base64.b64encode(raw).decode(), "5jtZuBvFVWvMMHZo5VCuP98GEOt1uxmzvSF+rBzzQlM=")
         pem = (HERE / "release-public-key.pem").read_text().splitlines()
         der = base64.b64decode("".join(pem[1:-1]), validate=True)
         self.assertEqual(der, vr.ED25519_DER_PREFIX + raw)

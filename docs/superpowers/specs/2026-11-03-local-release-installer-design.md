@@ -6,6 +6,10 @@ The owner requested a short GitHub-hosted `curl | bash` installation command and
 an entirely local build, verification, signing, and GitHub Release publication.
 GitHub stores source and completed artifacts; no workflow or cloud runner runs.
 The owner's `execute` instruction approves this approach and inline execution.
+The owner subsequently supplied a local signing directory and explicitly
+authorized replacing the official public key with its matching public key.
+Only the public key is committed; the private key and generation utility stay
+outside the repository. Existing old-key installations require manual migration.
 
 ## Approaches
 
@@ -32,18 +36,19 @@ The owner's `execute` instruction approves this approach and inline execution.
   accepts the Minecraft EULA, starts instances, or exposes a public listener.
 - Select latest through bounded official GitHub metadata; validate stable
   SemVer, then fetch a fixed version. Verify the pinned Ed25519 signature,
-  architecture, and checksum before host changes. No trust-root rotation.
+   architecture, and checksum before host changes. The owner-authorized initial
+   trust root has SHA256 d7ab48a9fa4414e04027255f140f6677a451e868470e14ef3c64770420d81a7f.
 - Keep deployment companions authenticated by fixed source SHA and file hashes.
   The new initial script remains a mutable trust boundary documented honestly.
 - Local publication retains exact clean protected-main identity, official remote
   identity, version policy, no overwrite, explicit draft retry, bounded asset
   read-back, signature/hash verification, tag identity, and latest discovery.
 - Local provenance must be labeled local, bind the exact source SHA and every
-  payload including checksums, and be signed with the existing pinned key. It
+   payload including checksums, and be signed with the owner-selected pinned key. It
   must not pretend to be GitHub OIDC provenance. Preserve the unused workflow.
 - Missing local signing credentials or protected-main integration blocks official
   publication. Keep unsigned candidates and report the blocker; never extract a
-  cloud secret, forge context, replace the key, or publish unsigned artifacts.
+   cloud secret, forge context, make an unauthorized key change, or publish unsigned artifacts.
 
 ## Verification and non-goals
 

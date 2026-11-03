@@ -15,10 +15,10 @@ import time
 
 SOURCE_COMMIT = "884c435326fd9ed346ef6dd41aecdb68fd22088b"
 FILES = {
-    "install.py": "cc981a47ce8460d85cab120e4b1853a20f738bc6d521a07c5258feee70e6e4ab",
+    "install.py": "cb8d1fd0b7abc3fb371803612679c108b52a85dced7290de78af39df3212d814",
     "install.sh": "e9171efef22e7dc941a4cf866161cc549a0bd4b0035352fd3e24bb74ab2f6467",
-    "verify_release.py": "b4f57f344492e5655ab1950d4a17afde7c23bff29ce3a25350535f438450439d",
-    "release-public-key.pem": "b1c24b973d56dee39b5316ba70c3e7c9648a23621bfc329060ed5270781ab5af",
+    "verify_release.py": "1dbc963f336721a836b56da47c072cfb9cc87f4a59c38ecc77353a37637803fe",
+    "release-public-key.pem": "6fa987ba6fa0a98a74529503328df6edd8e3f570cdc07a750215c99afd488081",
     "control": "6c80bcc0efc1e36d4de73eba84e02e1765d662b5c94663e8d29206abda53d54f",
     "new-empire-runtime": "513469445bba1d54c058b94c262db2e58d776ab56a98701fae7ed6e0028a3d96",
     "systemd/new-empire-control.service": "e5c36842d55aae33b841ab91dc589f69cd4a0e9d251e70ad67981f2191020a9d",
