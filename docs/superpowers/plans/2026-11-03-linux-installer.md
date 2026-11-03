@@ -59,10 +59,10 @@
 **Files:** Update the two checklist documents with actual results only; no application/API changes.
 
 - [x] Run `make check` and `make security` with the verified local toolchain; record exact revision, warnings and skips.
-- [ ] Build Linux amd64 and arm64 candidates locally with the embedded UI and unchanged production public key before any push; do not publish unsigned candidates.
-- [ ] Review the complete diff, validate README command syntax and relative links, and confirm `dev`, clean staging scope and unchanged disabled Actions policy.
-- [ ] Push `dev` and propose a conventional feature PR to `main`; do not reuse PR #1's protection exception or bypass mandatory review.
-- [ ] Report implementation, executed checks, unrun real-host installation and the exact signed-publication blocker. Do not restart the retained VM or publish a release.
+- [x] Build Linux amd64 and arm64 candidates locally with the embedded UI and unchanged production public key before any push; do not publish unsigned candidates.
+- [x] Review the complete diff, validate README command syntax and relative links, and confirm `dev`, clean staging scope and unchanged disabled Actions policy.
+- [x] Push `dev` and propose a conventional feature PR to `main`; do not reuse PR #1's protection exception or bypass mandatory review.
+- [x] Report implementation, executed checks, unrun real-host installation and the exact signed-publication blocker. Do not restart the retained VM or publish a release.
 
 #### Executed verification after review fixes
 
@@ -76,5 +76,23 @@ skips. Ten existing OpenAPI warnings, npm install-script policy warnings and
 test-DOM navigation diagnostics remain unsuppressed. Go scanning found no
 reachable or imported-package vulnerabilities and one unused module advisory;
 the production npm audit found none. Earlier failed host-fixture execution is
-not counted as a pass. Candidate builds, remote integration and release status
-must be recorded separately when actually performed.
+not counted as a pass.
+
+Clean-source candidate builds at `3b13f7d86d6f020dd67aa8d545711fa504cd010d`
+passed for Linux amd64 and arm64 before its push. Archive hashes, ELF machine,
+all three embedded UI files, source identity and the unchanged production
+public key were checked; binaries were not executed. All nine pinned deployment
+files, the README checksum and shell syntax, and 34 relative Markdown links
+were verified. One independent read-only review's four source findings were
+fixed in one test-first pass; no minor findings were deferred.
+
+Draft [PR #7](https://github.com/gabrielpgava/newempire-server-control/pull/7)
+proposes `dev` into `main` and records the executed checks and limitations. The
+final checklist-only commit must also be built locally before its push. Actions
+remain disabled, main review protections remain intact, and no tag or official
+release was published. Real-host signed installation, service/Minecraft
+lifecycle, online backup/restore, firewall traces, official update/rollback and
+site-specific sudo/TTY behavior remain untested. The VM stays off. The retained
+publisher still requires the retired workflow/OIDC provenance, with no approved
+replacement; the documented command is unavailable for real release
+installation until main integration and official signed publication.
