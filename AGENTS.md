@@ -76,7 +76,7 @@ No module is complete if its user-facing controls are nonfunctional or its failu
 - Before coding: inspect the repository, its branch status, current docs and tests. Do not discard user work.
 - Describe scope and integration boundaries for a large feature. Implement in complete vertical slices.
 - Keep changes small enough to review, but do not split a feature into unusable partial releases.
-- Use Conventional Commits. Prefer squash merges with conventional PR titles.
+- Use Conventional Commits. Prefer squash merges from `dev` into `main` with conventional PR titles.
 - Add or update tests for changed behavior. Test failure modes, not only successful paths.
 - Update OpenAPI and end-user documentation alongside any API or workflow change.
 - Run repository-defined formatting, linting, security checks, migrations, frontend build, unit tests, and applicable integration tests before declaring work complete.
@@ -84,13 +84,15 @@ No module is complete if its user-facing controls are nonfunctional or its failu
 - `make check` and `make security` are the integrated automated gates; `make release-dry-run` builds unsigned-publication test artifacts using an ephemeral signing key and makes no GitHub writes. `bash scripts/test-sandbox.sh` runs Go race tests with read-only source/module mounts and no network; its private Docker volume is only for the helper's ACL fixture because Docker tmpfs may not support POSIX ACLs. The deployed application still requires ACL-capable storage.
 - Run checks locally and record their results. Do not add or re-enable GitHub Actions workflows or introduce paid CI/release services without explicit owner approval. Removing workflow files does not change remote branch rules or cancel existing runs; report those external controls separately.
 
-## Parallel agents and worktrees
+## Single development branch and workspace
 
-- Delegate independent substantial modules when the execution environment supports parallel work.
-- Assign each agent clear module ownership, tests, API contracts, and docs responsibilities.
-- Use separate branches or worktrees to avoid competing changes to the same files.
+- All implementation, fixes, documentation, and consolidation MUST happen on the single long-lived `dev` branch in the existing repository checkout. Do not develop directly on `main`; it is the reviewed integration and release destination for `dev`.
+- Before editing, verify that the current branch is `dev`. If it does not exist, create it from `main` in the existing checkout. If another branch has uncommitted changes or switching would disturb existing work, stop and ask the owner; never discard or automatically stash user work.
+- Reuse `dev` across tasks. Do not create per-task, per-feature, per-agent, or temporary branches, additional Git worktrees, or separate repository workspaces, even when a skill recommends isolation.
+- Keep edits sequential in the shared checkout on `dev`. Delegate only read-only analysis or review; agents must not create branches or workspaces or make concurrent edits.
 - Centralize shared migrations, integration contracts, release automation, and `AGENTS.md` maintenance under one integration owner.
-- Integrate branches, resolve conflicts, and run the complete suite after merge. Do not stop with unmerged worktrees.
+- Run the complete required suite on the consolidated `dev` changes before proposing integration into `main`.
+- Preserve pre-existing branches and worktrees. Deleting or consolidating them requires explicit owner approval and must not discard existing work.
 
 ## Mandatory release policy
 
