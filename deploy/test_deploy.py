@@ -155,6 +155,18 @@ class InstallationAccessTests(unittest.TestCase):
         self.assertNotIn("already configured", output)
         self.assertNotIn("First-owner setup code:", output)
 
+    def test_invalid_url_types_are_nonfatal_and_do_not_display_code(self):
+        self.write_token()
+        for value in (123, True, [], {"url": "https://panel.example.test"}):
+            with self.subTest(value=value):
+                self.config.write_text(json.dumps({"public_url": value, "data_dir": str(self.data)}))
+                try:
+                    output = self.report()
+                except Exception as error:
+                    self.fail("reporting raised instead of failing safely: " + type(error).__name__)
+                self.assertIn("reporting unavailable", output)
+                self.assertNotIn(self.code, output)
+
     def test_unsafe_tokens_are_not_displayed(self):
         for kind in ("symlink", "hardlink", "permissions", "oversized", "control", "fifo", "owner"):
             with self.subTest(kind=kind):
@@ -186,6 +198,66 @@ class InstallationAccessTests(unittest.TestCase):
                 self.assertNotIn(self.code, output)
                 self.assertNotIn("First-owner setup code:", output)
                 self.token.unlink()
+
+
+@unittest.skipUnless(os.geteuid() == 0, "isolated root ownership fixture required")
+class InstallationAccessPathTests(unittest.TestCase):
+    def test_service_relative_default_and_nested_paths_use_real_traversal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            etc, working = root / "etc", root / "panel"
+            etc.mkdir(); working.mkdir(mode=0o700)
+            os.chown(working, 1000, 1000)
+            values = (None, "state", str(working / "nested" / "state"), "")
+            for value in values:
+                with self.subTest(value=value):
+                    data = working / ("data" if value is None else value)
+                    data.mkdir(parents=True, exist_ok=True)
+                    for parent in (data, *data.parents):
+                        if parent == root:
+                            break
+                        os.chown(parent, 1000, 1000); parent.chmod(0o700)
+                    token = data / "setup-token"
+                    token.write_text("R" * 43 + "\n"); token.chmod(0o600); os.chown(token, 1000, 1000)
+                    config = {"public_url": "https://panel.example.test"}
+                    if value is not None:
+                        config["data_dir"] = value
+                    (etc / "config.json").write_text(json.dumps(config))
+                    for interactive in (True, False):
+                        output = io.StringIO(); output.isatty = lambda: interactive
+                        with mock.patch.object(installer, "ETC", str(etc)), mock.patch.object(installer, "DATA", str(working)), mock.patch.object(installer.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000, pw_gid=1000)), mock.patch.object(installer, "local_addresses", return_value=[]), mock.patch.object(installer.sys, "stdout", output):
+                            installer.print_installation_access()
+                        if interactive:
+                            self.assertIn("First-owner setup code: " + "R" * 43, output.getvalue())
+                        else:
+                            self.assertIn("sudo cat -- " + str(token), output.getvalue())
+                            self.assertNotIn("R" * 43, output.getvalue())
+                    self.assertEqual(token.read_text(), "R" * 43 + "\n")
+            with self.assertRaisesRegex(ValueError, "unsafe ownership"):
+                with installer.directory(str(working / "nested" / "state"), owner=(1000, 1000)):
+                    self.fail("installation traversal accepted panel-owned ancestors")
+
+    def test_unsafe_data_ancestors_do_not_display_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); etc = root / "etc"; etc.mkdir()
+            for kind in ("symlink", "permissions", "foreign"):
+                with self.subTest(kind=kind):
+                    parent = root / kind; parent.mkdir(mode=0o700); os.chown(parent, 1000, 1000)
+                    data = parent / "state"; data.mkdir(mode=0o700); os.chown(data, 1000, 1000)
+                    token = data / "setup-token"; token.write_text("R" * 43 + "\n"); token.chmod(0o600); os.chown(token, 1000, 1000)
+                    path = data
+                    if kind == "symlink":
+                        link = root / "link"; link.symlink_to(parent); path = link / "state"
+                    elif kind == "permissions":
+                        parent.chmod(0o770)
+                    else:
+                        os.chown(parent, 2000, 2000)
+                    (etc / "config.json").write_text(json.dumps({"public_url": "https://panel.example.test", "data_dir": str(path)}))
+                    output = io.StringIO(); output.isatty = lambda: True
+                    with mock.patch.object(installer, "ETC", str(etc)), mock.patch.object(installer.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000, pw_gid=1000)), mock.patch.object(installer, "local_addresses", return_value=[]), mock.patch.object(installer.sys, "stdout", output):
+                        installer.print_installation_access()
+                    self.assertNotIn("R" * 43, output.getvalue())
+                    self.assertIn("reporting unavailable", output.getvalue())
 
 
 class ReleaseVerificationTests(unittest.TestCase):

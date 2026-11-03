@@ -268,20 +268,46 @@ def local_addresses():
     return result
 
 
+@contextlib.contextmanager
+def setup_directory(path, owner):
+    # Only secret reporting accepts panel-owned ancestors; installation paths stay root-only.
+    parts = pathlib.PurePosixPath(path).parts
+    if not path.startswith("/") or ".." in parts or str(pathlib.PurePosixPath(path)) != path:
+        raise ValueError("noncanonical setup path")
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in (None, *parts[1:]):
+            if part is not None:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            info = os.fstat(fd)
+            if (info.st_uid, info.st_gid) not in ((0, 0), owner) or info.st_mode & 0o022:
+                raise ValueError("unsafe setup directory")
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def print_installation_access():
     try:
         with directory(ETC):
             config = json.loads(vr.read_regular(ETC + "/config.json", 65536))
         url = config["public_url"]
+        if not isinstance(url, str) or not re.fullmatch(r"[!-~]+", url):
+            raise ValueError("invalid dashboard URL")
         parsed = urllib.parse.urlsplit(url)
-        if not isinstance(url, str) or not re.fullmatch(r"[!-~]+", url) or parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("invalid dashboard URL")
         print("Dashboard URL: " + url)
         print("Default localhost address (fresh installs): http://127.0.0.1:8080 (http://localhost:8080)")
         addresses = local_addresses()
         print("Local interface addresses (not dashboard listeners): " + (", ".join(addresses) if addresses else "unavailable"))
         print("Loopback is the default. Remote access requires an SSH tunnel or a configured HTTPS reverse proxy; no network binding was changed.")
-        data_dir = config.get("data_dir", DATA)
+        data_dir = config.get("data_dir", "data")
+        if data_dir is None:
+            data_dir = "data"
+        data_dir = os.path.normpath(os.path.join(DATA, data_dir))
         account = pwd.getpwnam(PANEL)
         token_path = str(pathlib.Path(data_dir) / "setup-token")
         read_command = "sudo cat -- " + shlex.quote(token_path)
@@ -290,7 +316,7 @@ def print_installation_access():
             return
         for attempt in range(20):
             try:
-                with directory(data_dir, owner=(account.pw_uid, account.pw_gid)) as parent:
+                with setup_directory(data_dir, (account.pw_uid, account.pw_gid)) as parent:
                     fd = os.open("setup-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
                     with os.fdopen(fd, "rb") as source:
                         info = os.fstat(source.fileno())
