@@ -1,4 +1,4 @@
-"""Small, dependency-free repository contract checks used by CI."""
+"""Small, dependency-free repository contract checks used by make check."""
 
 import json
 import pathlib

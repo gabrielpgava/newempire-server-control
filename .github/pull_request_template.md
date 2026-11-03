@@ -14,4 +14,5 @@ Describe the complete user-visible outcome and any limitations.
 Use a Conventional Commit PR title. `feat`, breaking changes, and significant
 capabilities require `release:feature`; that label requires a release-producing
 title. Use `!` in the title for breaking changes and explain the migration here.
-The protected-main workflow publishes only after validation and verification.
+Record local `make check` and `make security` results. GitHub Actions and automatic
+release publication are disabled; do not re-enable them without maintainer approval.

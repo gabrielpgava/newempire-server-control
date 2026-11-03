@@ -2,7 +2,7 @@
 
 Use the exact Go version in `.go-version` and the Node version in root `.node-version`.
 `go.mod` declares module
-compatibility. Do not replace these authorities with a floating CI runtime.
+compatibility. Do not replace these authorities with a floating toolchain.
 
 The module is `github.com/gabrielpgava/newempire-server-control`. Domain types
 live in `internal/model`; domain packages do not import HTTP handlers. Read
@@ -32,6 +32,10 @@ ambiguous OpenAPI file. Keep exactly one of `docs/api/openapi.json`,
 reference validation. Go tests include versioned migrations and the security
 regressions present in each domain. Lockfiles must not drift during checks.
 
+GitHub Actions workflows are disabled by the owner's budget policy. Run these
+commands locally and attach results to the PR; they are not run automatically on
+GitHub. Do not add workflows or paid CI/release services without owner approval.
+
 The normal commands run application tests on your machine. For isolation use
 the repository's separately maintained `scripts/test-sandbox.sh` via
 `make test-sandbox`, with its required cached dependencies/container image; see
@@ -43,10 +47,10 @@ credentials or service units.
 Use small complete vertical slices, Conventional Commits and squash PR titles.
 Feature/breaking PRs require `release:feature`; a label cannot turn a `chore:` title
 into a releasing change. Include real test evidence, English documentation,
-failure handling, compatibility, recovery and migration effects. Release code,
-workflows and the trust root require owner review. Do not bypass checks to make
-a release look complete. [Releases](releases.md) describes signing setup and the
-exact publication/retry protocol.
+failure handling, compatibility, recovery and migration effects. Release code
+and the trust root require owner review. Do not bypass checks to make a release
+look complete. [Releases](releases.md) describes the retained local tooling and
+the current publication blocker.
 
 Linux/systemd integration is a separate acceptance activity; a macOS build or
 mocked service test cannot prove it. Docker is not silently substituted for an

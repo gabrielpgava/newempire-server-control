@@ -33,6 +33,10 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Redact known RCON credentials from console/player job output and errors.
 - Include older conventional commit subjects in release planning even when the newest commit is documentation or a smaller repair.
 
+### Removed
+
+- GitHub Actions CI/release workflows, their Dependabot update entry, and local actionlint invocation at the owner's request to avoid runner costs. Local validation/security commands and signed-update verification remain; automatic publication is disabled and trusted release publication is blocked pending an approved replacement process.
+
 ### Project policy
 
 - PolyForm Shield 1.0.0 source-available licensing; not described as OSI-approved open source.
@@ -41,5 +45,5 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 
 ### Verification still required
 
-- Protected-branch CI, Linux/systemd/firewall and real Minecraft acceptance, Proxmox LXC testing, provider delivery tests, and disaster-recovery drills. Local host/Linux checks and ephemeral-key package smokes are recorded in the acceptance ledger, not claimed as live deployment proof.
+- Maintainer-reviewed local checks, Linux/systemd/firewall and real Minecraft acceptance, Proxmox LXC testing, provider delivery tests, and disaster-recovery drills. Local host/Linux checks and ephemeral-key package smokes are recorded in the acceptance ledger, not claimed as live deployment proof.
 - Confirm release signing and trusted publication, both native architectures, updater discovery, panel-only restart, and post-update rollback on a real host. See [acceptance](docs/acceptance.md) for the evidence boundary.

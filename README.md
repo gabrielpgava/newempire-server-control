@@ -122,6 +122,8 @@ Actual implemented UI: [desktop](docs/evidence/ui/desktop-account.png) · [mobil
 
 Read [AGENTS.md](AGENTS.md) before contributing. Keep code, tests, English documentation, migrations, and OpenAPI synchronized. Use Conventional Commits. A significant feature requires a versioned release after trusted-branch checks pass; do not publish incomplete or untested code just to create a tag.
 
+GitHub Actions workflows have been removed at the owner's request to avoid runner costs. Run `make check` and `make security` locally. Automatic releases are disabled, and official publication is blocked pending an approved trusted publication process; see [releases](docs/releases.md). Remote branch rules and existing workflow runs are not changed by removing these files.
+
 The required release output includes Linux amd64/arm64 binaries with the embedded UI, machine-readable metadata, checksums, and authenticated signatures/provenance. Signing configuration, publication, self-update discovery, and a real-host rollback drill are release gates, not assumed successes. Until a release is actually published, use source builds for evaluation only.
 
 ## License

@@ -9,7 +9,6 @@ if [[ -n "$unformatted" ]]; then
   exit 1
 fi
 go mod verify
-go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 make frontend
 # Pin the validator too; no floating npx dependency in release validation.
 npm exec --yes --package=@redocly/cli@2.72.1 -- redocly lint "$(python3 -B scripts/check.py openapi-file)" --extends minimal

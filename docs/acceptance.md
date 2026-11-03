@@ -2,6 +2,16 @@
 
 This is an evidence ledger, not a completion badge. **No production-readiness, signed-release deployment, live Minecraft acceptance, Proxmox test, or published release is confirmed.** Limited development-fixture systemd checks are recorded separately below. Update this file with command output/artifact links and exact revisions when the integration owner completes additional checks.
 
+## Current automation policy
+
+GitHub Actions CI/release workflows have been removed at the owner's request to avoid runner costs. Validation/security checks must run locally and be reviewed before merge. Official publication is blocked because the retained publisher requires the removed workflow context and GitHub provenance; no replacement pipeline or weakened verification is introduced. Historical CI results below remain evidence only for their recorded revisions. Removing source files does not cancel existing remote runs or change branch rules; required-check settings may still block merges and need separate maintainer review.
+
+### Workflow removal verification — 2026-11-02
+
+On macOS arm64 with Go 1.27.3 and checksum-verified Node 26.13.0, the working tree based on `26f3fab0be4b755fd417dd94659d644b38b80df6` plus the workflow-removal changes passed `GOMAXPROCS=2 make check security`: formatting/module checks, typecheck, **108 frontend tests**, UI/native builds, OpenAPI validation, **20 Python script tests**, deployment tests, vet and all-package Go race tests. One of 11 deployment tests was skipped because it requires isolated root. OpenAPI retained its ten documented warnings; npm retained the esbuild/fsevents install-script policy warnings. The Go scan found no reachable/imported-package vulnerabilities and one unused module-level advisory; the production npm audit found none.
+
+Repository contracts, shell syntax, assert-based checks for absent workflows/Actions Dependabot configuration/actionlint, and all **49** local links in modified Markdown also passed. No remote GitHub settings, workflow runs, tags or releases were changed. Linux sandbox, clean-source package dry-run and live-host acceptance were not repeated for this automation/documentation-only change; their earlier results remain scoped to the revisions below.
+
 ## Evidence recorded so far
 
 The integration owner executed the following on **2026-11-02**. All delegated branches are integrated locally on `feat/integrated-control`; none is a published release.
@@ -55,7 +65,7 @@ The complete Linux run at `f3b2161` **failed** in three packages: CLI fixtures i
 | 9 | Players/worlds/properties enforce per-action roles, safe keys/names, preservation, confirmation, and truthful output. | Host API/domain and frontend player/world/property regressions pass. | Real whitelist/bans/OP/IP privacy, world activation/generation/custom dimensions, imports/exports and restart behavior. |
 | 10 | Durable jobs, per-instance exclusivity, safe cancellation, idempotency, retry boundaries, and timezone-aware schedules survive interruption. | Host job/scheduler/CLI tests pass, including explicit-job execution without unrelated queued work. | Kill/restart/power-loss drills at real commit barriers, catch-up, contention, failed schedules and player postponement. |
 | 11 | Monitoring/notifications and mobile/keyboard UI show actionable, accurate states without leaking data. | Ten actual empty-panel browser states pass bounded axe/keyboard/overflow checks; notification fixtures and frontend tests pass. | Real accounting/delivery/retry, per-instance browser workflows, physical devices and screen readers. |
-| 12 | Trusted CI produces authentic Linux releases, and the independent updater verifies official identity/assets/version policy, restarts only the panel, health-checks and rolls back safely. | Host/Linux release/updater fixtures, all 11 isolated deployment Python tests, dry-run/package smokes and actual-schema refusal/restart on real systemd pass. Test signatures are ephemeral, not official provenance. | Protected-branch CI, authentic published assets/provenance, official updater discovery and failed-health rollback with unchanged Minecraft PID/world/content. |
+| 12 | Trusted publication produces authentic Linux releases, and the independent updater verifies official identity/assets/version policy, restarts only the panel, health-checks and rolls back safely. | Host/Linux release/updater fixtures, all 11 isolated deployment Python tests, dry-run/package smokes and actual-schema refusal/restart on real systemd pass. Test signatures are ephemeral, not official provenance. | Approved trusted publication path, reviewed local checks, authentic published assets/provenance, official updater discovery and failed-health rollback with unchanged Minecraft PID/world/content. |
 
 **A row is not complete because a control exists or a mock test passed.** A failure path without a test or a live prerequisite without evidence remains a gap.
 
@@ -63,7 +73,7 @@ The complete Linux run at `f3b2161` **failed** in three packages: CLI fixtures i
 
 For check 12, independently record each mandatory release condition:
 
-1. CI rejects broken builds, failing tests, invalid metadata, and missing mandatory files.
+1. Local gates reject broken builds, failing tests, invalid metadata, and missing mandatory files; maintainers review the results.
 2. A complete significant conventional `feat:` merge creates the expected new stable SemVer release after checks pass.
 3. Both Linux architectures have authenticated assets whose names, sizes, hashes, versions, and manifest entries match.
 4. The panel discovers the official release, stages/verifies it, invokes the independent updater, and recovers after failed health checks.
@@ -72,7 +82,7 @@ For check 12, independently record each mandatory release condition:
 
 Current release version/status: **Unreleased; local SemVer planning proposes `v0.1.0`, not a published tag/release.** Initial read-only checks found an empty public repository. After explicit maintainer authorization, the integrated source was pushed and [draft PR #1](https://github.com/gabrielpgava/newempire-server-control/pull/1) was opened against a minimal bootstrap `main` containing no application or release workflow.
 
-## Publication preparation — 2026-11-02
+## Historical publication preparation — 2026-11-02, before workflow removal
 
 - `main` requires the GitHub Actions **Pull request policy** and **Validate** checks, an up-to-date branch, independent approval, code-owner review and approval of the latest push. Administrators are included; force pushes/deletion are denied; squash-only merges preserve the conventional PR title. Required review was not bypassed.
 - The **release** environment requires maintainer approval, prevents self-review and permits only protected branches. A later read-back exposed GitHub's default administrator bypass; it was explicitly disabled and independently read back as `can_admins_bypass: false`, preserving the reviewer and branch restrictions. No bypass was used. The `RELEASE_SIGNING_KEY` secret name is present; its value was not read or logged. A signing job must still verify that it matches the committed trust root.
@@ -87,7 +97,7 @@ Actual-schema enforcement from `59c429b` is now integrated at `16f6572`: online 
 
 ## Remaining release gates
 
-- Run protected-branch CI on the reviewed final merge; passing local host/Linux gates and package smokes do not prove GitHub workflow publication.
+- Run and review local checks on the final source. Resolve stale required GitHub check settings separately; Actions must not be restored without owner approval. Establish an approved trusted publication path before any official release; local gates and package smokes do not prove publication.
 - Complete all applicable disposable-host drills above on Linux/systemd; separately test Proxmox LXC before claiming that deployment is verified.
 - Confirm the installer and recovery guides against actual files and commands. A Compose panel is not a tested Minecraft Docker adapter.
 - Provide real external-provider and per-instance browser evidence; the committed screenshots cover the implemented empty-panel/account UI only.

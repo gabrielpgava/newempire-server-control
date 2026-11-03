@@ -1,16 +1,16 @@
 # Testing and acceptance evidence
 
 Run `make check` followed by `make security` on the complete integrated source.
-These are the CI gates, not claims that every product acceptance criterion has
+These are local gates, not claims that every product acceptance criterion has
 already been verified. Report actual commands, source revision, failures and
-skipped checks in each PR.
+skipped checks in each PR. GitHub Actions workflows are disabled by the owner's
+budget policy; no GitHub-hosted checks run from this source tree.
 
 ## Automated gates
 
 - Repository contracts: mandatory files, Node version authority, frontend scripts
   and exactly one OpenAPI document.
 - `gofmt`, `go mod verify`, `go vet ./...` and a native `./cmd/control` build.
-- Pinned actionlint validation of the GitHub workflow syntax and expressions.
 - `npm ci`, TypeScript checking, non-watch frontend tests and production build
   before compiling the Go-embedded UI.
 - Pinned Redocly OpenAPI validation, including reference resolution.
@@ -43,7 +43,7 @@ module cache, an empty allowlisted environment, no external network, scratch-onl
 writes and container CPU/memory/process/file limits. Fetch/build required
 dependencies outside the sandbox first. Missing cached dependencies are a blocker,
 not permission to enable network access inside untrusted tests. The sandbox target
-is separate from normal CI and may not include frontend/browser tests.
+is separate from the normal local gates and may not include frontend/browser tests.
 
 `scripts/test-web-sandbox.py --dependencies PRIVATE_LINUX_DEPENDENCY_DIRECTORY`
 separately runs frontend tests/build without network or credentials. Its two
@@ -85,7 +85,8 @@ the documented least-privilege install:
    commands and observed failures/recovery. Do not claim success without that
    evidence. No optional systemd job is wired to an unimplemented test command.
 
-Publication also requires protected-main/environment settings, an available
-signing secret, uploaded/read-back assets and verified provenance. A workflow
-definition or mocked GitHub test proves none of those external facts by itself.
-See [the release runbook](releases.md) for setup and recovery.
+Publication also requires trusted source/permissions, an available signing key,
+uploaded/read-back assets and verified provenance. The retained publisher requires
+the removed GitHub workflow context, so official publication is currently blocked.
+Mocked GitHub tests do not prove any of these external facts. See
+[the release runbook](releases.md) for the current boundary.
