@@ -98,3 +98,62 @@ changing the protective firewall or removing the application's instance guard.
 [Sanitized partial results and exact job IDs](api-first-launch-evidence.json)
 preserve this failure independently of any later retry. No production data or
 valuable world was used.
+
+## One authorized retry and bounded closure
+
+On **2026-11-03 UTC**, the retained disposable instance received one authorized
+start retry. Before starting, offline backup job
+`222f93f401a617c6bbefb3df14641aac` succeeded with a verified **131,197,131-byte**
+archive. Hashes of all **23** retained world files were unchanged by the backup.
+[Sanitized retry results](runtime-retry-evidence.json) record the backup identity
+and SHA-256 separately from the earlier failed launch.
+
+The temporary channel admitted exactly `discovery.minecraftservices.com` and
+`api.minecraftservices.com`, not the previous metadata hosts. Both anonymous
+UID-999 probes passed default CA/hostname verification over TLS 1.3. This remained
+a restricted test-only TLS-byte relay, not general egress or a supported proxy;
+it checked SNI/public destinations, not encrypted HTTP paths or authority.
+Authentication, secure-profile enforcement and the watchdog remained enabled.
+
+**Start job `b2bc602c9a9461f7b3bb03f6366310fb` succeeded** with
+`state:"ready"`, `ready:true` and PID **7463**. However, the immediate independent
+status assertion failed. Its exact response was not retained, so neither
+sustained readiness nor the cause of that discrepancy is established. This is
+an incomplete acceptance result, not a failed backend start job or a passing
+lifecycle drill. No further start, network expansion or workaround was attempted.
+
+The harness stopped Minecraft; a separate service check confirmed **MainPID 0**
+(unit state `failed`). Console/firewall traces, coordinated online backup,
+successful restart/restore and unchanged-running-Minecraft panel-update checks
+were not reached. Official signed installation/update/rollback remains untested.
+The owned routes/NAT/relay/SSH tunnel were removed, original guest
+hosts/SSH/network state restored and the protective firewall left unchanged.
+Finally, `sudo -n systemctl poweroff` returned **0** and QEMU exit was observed at
+**00:51:41 UTC**, without forced termination. The VM disk, backup and private
+diagnostics were retained; no credential or database contents are published.
+
+## Local closure checks and delivery status
+
+On **2026-11-03 UTC**, macOS ARM64 with Go **1.27.3** and checksum-verified Node
+**26.13.0** passed `GOMAXPROCS=2 make check security`. This ran against the working
+tree based on `26f3fab0be4b755fd417dd94659d644b38b80df6`, including the owner's
+separately uncommitted budget-policy/workflow-removal edits and this retry
+evidence. It is not a clean-source package or new Linux-host acceptance run.
+
+Formatting/module checks, typecheck, **108 frontend tests**, UI/native builds,
+OpenAPI validation, **20 Python script tests**, vet and all-package Go race tests
+passed. Deployment tests ran **11**, with **one root-only fixture skipped**.
+OpenAPI retained ten warnings; npm retained its esbuild/fsevents install-script
+policy warnings. The Go scan reported no reachable/imported-package findings and
+one unused module-level advisory; the production npm audit reported none.
+Retry JSON assertions, all **52** relative links in the **12** modified Markdown
+documents and `git diff --check` also passed.
+
+GitHub Actions is remotely disabled. `main` still requires the disabled
+`Pull request policy` / `Validate` checks and independent/latest-push approval;
+only the PR author is a collaborator. No protection was bypassed. There is no
+approved trusted publication path for the retained workflow/provenance-bound
+publisher. **No tag or official release exists**; `v0.1.0` remains planning only.
+Official discovery, signed install/update and failed-health rollback are not
+verified. Linux sandbox/package results remain scoped to their earlier source
+revisions, not rerun or substituted for these remaining gates.
