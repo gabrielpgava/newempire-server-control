@@ -34,11 +34,10 @@ ambiguous OpenAPI file. Keep exactly one of `docs/api/openapi.json`,
 reference validation. Go tests include versioned migrations and the security
 regressions present in each domain. Lockfiles must not drift during checks.
 
-Automatic CI/publication is disabled by the owner's budget policy. Run these
-commands locally and attach results to the PR. The sole approved workflow is
-manual release publication; each run needs explicit owner authorization and
-Actions must be disabled afterward, even on failure. No automatic validation
-workflow or trigger is restored. `make dist` requires a version, clean committed
+All checks, builds, signing and publication run locally under the owner's policy.
+Attach results to the PR; do not enable or dispatch the preserved unused manual
+workflow. No automatic validation workflow or trigger is restored.
+`make dist` requires a version, clean committed
 source and a new output directory outside the checkout or Git-ignored (such as
 `dist/local-evaluation`). Existing outputs, including dangling symlinks, are
 rejected before frontend work; it never signs or publishes its candidates.
@@ -56,8 +55,8 @@ Feature/breaking PRs require `release:feature`; a label cannot turn a `chore:` t
 into a releasing change. Include real test evidence, English documentation,
 failure handling, compatibility, recovery and migration effects. Release code
 and the trust root require owner review. Do not bypass checks to make a release
-look complete. [Releases](releases.md) describes the local tooling, protected
-manual publication and failure/retry boundaries.
+look complete. [Releases](releases.md) describes the local tooling, protected-main
+publication and failure/retry boundaries.
 
 Linux/systemd integration is a separate acceptance activity; a macOS build or
 mocked service test cannot prove it. Docker is not silently substituted for an

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install one explicitly selected, signed stable Linux release. Run as root."""
+"""Install a signed stable Linux release (latest by default). Run as root."""
 
 import argparse
 import contextlib
@@ -13,6 +13,7 @@ import pathlib
 import pwd
 import re
 import shlex
+import shutil
 import socket
 import stat
 import subprocess
@@ -33,8 +34,8 @@ DATA = "/var/lib/new-empire-control"
 MANAGED = "/srv/new-empire/instances"
 HOSTS = {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
 # The trust root is part of this reviewed installer, never downloaded with assets.
-PINNED_KEY = "DVI1QlV02lloZudVLPo64ZEOjQiEQR5PKyMlA+eVdG8="
-PINNED_KEY_SHA256 = "dd6804fd279cc3935f9dc3669dc900d81f7e1d0a1382b67f007568a615e5bd7f"
+PINNED_KEY = "5jtZuBvFVWvMMHZo5VCuP98GEOt1uxmzvSF+rBzzQlM="
+PINNED_KEY_SHA256 = "d7ab48a9fa4414e04027255f140f6677a451e868470e14ef3c64770420d81a7f"
 
 
 def command(*args):
@@ -336,20 +337,49 @@ def print_installation_access():
         print("Access/setup-code reporting unavailable: inspect the installed configuration and protected setup-token ownership/permissions locally. No code was generated or replaced.")
 
 
+def approved_java(values):
+    if not values:
+        found = shutil.which("java", path="/usr/sbin:/usr/bin:/sbin:/bin")
+        if not found:
+            raise ValueError("Java was not found; install a compatible runtime first or pass --java /absolute/path")
+        values = [found]
+    paths = []
+    for java in values:
+        path = str(pathlib.Path(java).resolve(strict=True))
+        if not re.fullmatch(r"/[A-Za-z0-9_./-]+", path) or path in paths:
+            raise ValueError("Java paths must be distinct canonical executable paths without special characters")
+        program(path)
+        paths.append(path)
+    return paths
+
+
+def latest_version(stage):
+    path = stage / "latest.json"
+    download(f"https://github.com/{vr.REPOSITORY}/releases/latest/download/release.json", path, 65536)
+    raw = vr.read_regular(path, 65536)
+    value = json.loads(raw, object_pairs_hook=vr.unique_object)
+    if not isinstance(value, dict):
+        raise ValueError("latest release manifest must be an object")
+    vr.parse_manifest(raw, value["version"], "amd64")
+    return value["version"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True, help="explicit stable SemVer, without v")
-    parser.add_argument("--java", action="append", required=True, help="root-approved Java executable; repeat for multiple runtimes")
+    parser.add_argument("--version", help="stable SemVer without v; defaults to the latest official stable release")
+    parser.add_argument("--java", action="append", help="root-approved Java executable; defaults to installed java; repeat for multiple runtimes")
     parser.add_argument("--archive", help="local native release archive; otherwise download from the fixed official repository")
     parser.add_argument("--manifest", help="local signed release.json (required with --archive)")
     parser.add_argument("--signature", help="local release.json.sig (required with --archive)")
     default_key = pathlib.Path(ETC + "/release-public-key.pem")
     parser.add_argument("--public-key", default=str(default_key if default_key.exists() else HERE / "release-public-key.pem"), help="root-owned pinned Ed25519 PEM; must match the embedded trust root")
     args = parser.parse_args()
-    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", args.version):
+    if args.version is not None and not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", args.version):
         parser.error("--version must be an explicit stable SemVer without v")
     if bool(args.archive) != bool(args.manifest) or bool(args.archive) != bool(args.signature):
         parser.error("--archive, --manifest and --signature must be supplied together")
+    if args.archive and not args.version:
+        parser.error("offline installation requires an explicit --version")
     if os.getuid() != 0 or os.geteuid() != 0 or os.uname().sysname != "Linux" or not pathlib.Path("/run/systemd/system").is_dir():
         parser.error("installation requires a root administrator on a booted Linux/systemd host")
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(os.uname().machine)
@@ -361,16 +391,12 @@ def main():
         for path in ("/usr/bin/openssl", "/usr/bin/systemctl", "/usr/sbin/visudo", "/usr/sbin/nft", "/usr/bin/sudo", "/usr/sbin/nologin"):
             program(path)
         required_versions()
-        java_paths = []
-        for java in args.java:
-            path = str(pathlib.Path(java).resolve(strict=True))
-            if not re.fullmatch(r"/[A-Za-z0-9_./-]+", path) or path in java_paths:
-                raise ValueError("Java paths must be distinct canonical executable paths without special characters")
-            program(path)
-            java_paths.append(path)
+        java_paths = approved_java(args.java)
         command("/usr/sbin/visudo", "--check", "--file", str(HERE / "sudoers/new-empire-control"))
         with tempfile.TemporaryDirectory(prefix="new-empire-install-", dir="/var/tmp") as temporary:
             stage = pathlib.Path(temporary)
+            if args.version is None:
+                args.version = latest_version(stage)
             for local, name, limit in ((args.manifest, "release.json", 65536), (args.signature, "release.json.sig", 1024), (args.archive, f"new-empire-control_{args.version}_linux_{arch}.tar.gz", vr.LIMIT)):
                 if local:
                     (stage / name).write_bytes(vr.read_regular(local, limit))

@@ -4,7 +4,24 @@ This is an evidence ledger, not a completion badge. **No production-readiness, s
 
 ## Current automation policy
 
-Automatic CI/publication remains disabled to avoid runner costs. Validation/security checks must run locally and be reviewed before merge. The owner authorized a normally-disabled, manual-only release workflow and one publication attempt; it preserves signing, GitHub provenance and verified draft read-back. This authorization is not evidence of successful publication. Any approved temporary merge/environment exception must be restored immediately, and Actions disabled when the run finishes or fails. Historical CI results below remain scoped to their recorded revisions; remote policy changes require separate evidence.
+Checks, builds, signing and publication must run locally and be reviewed before merge. The owner superseded the earlier workflow proposal with a strictly local release and explicitly selected a replacement initial signing key. The preserved manual-only workflow is unused; no cloud run is authorized. Local publication verifies source-bound signed provenance and downloaded draft assets before publishing. Historical CI results below remain scoped to their recorded revisions; no remote protection is implicitly waived.
+
+### Local installer and release preparation — 2026-11-03
+
+Clean **`bd7cfe5026b952268b120a565caee45ae455a0e4`** passed the following strictly local checks. Sources/toolchains were read-only inputs to network-disabled Linux arm64 containers with a clean environment, bounded private scratch and isolated ACL fixtures; Go 1.27.3 and Node 26.13.0 were already available locally. No signing key or GitHub credential entered these builds/tests.
+
+| Actual command/check | Result and boundary |
+| --- | --- |
+| `make check` | Passed formatting/module/lockfile checks, typecheck, **108 frontend tests**, production UI/native builds, API lint, **42 Python script tests**, **43 deployment tests with none skipped**, Go vet and all-package Go race tests. Ten existing OpenAPI warnings and jsdom navigation notices remain unsuppressed. |
+| `make security` | Passed with the fresh official Go database modified **2026-11-02T22:01:43Z** and official production npm advisory data replayed inside isolated loopback. Zero reachable/imported-package Go findings and zero production npm findings; one unused module-level advisory remains. Target code had no external network. |
+| `make dist VERSION=0.1.0 OUT=dist/candidate` | Both Linux binary-only archives with embedded UI, canonical manifest, source-bound CycloneDX SBOM and documentation built from clean source. Retained locally in `dist/candidate-bd7cfe5026b9`; these candidates are **unsigned**, not official update assets. |
+| `go run ./scripts/release dry-run -version 0.0.0-dev.3 -commit bd7cfe5026b952268b120a565caee45ae455a0e4 -out dist/dry-run-local` | Passed both packages, manifest/checksums and source-bound local provenance signing/verification using only an ephemeral in-memory key. Retained separately in `dist/dry-run-local-bd7cfe5026b9`; no official signature/publication. |
+| Both candidate binaries: `version --json` | Passed exact version/source/schema/repository identity as UID/GID 65534 in isolated containers without Node/Go on the panel PATH. Archive membership, ELF architecture, size and SHA-256 match the manifest. amd64 was emulated on arm64, not physical amd64 hardware. [Sanitized hashes and limits](evidence/native/local-release-candidate-evidence.json). |
+| One fresh read-only whole-change review, followed by a single regression-tested fix pass | All three important findings were reproduced before fixes: ambiguous workflow triggers, ambient GitHub-host redirection and stalled partial downloads. All **39 release tests**, deployment tests and Go release race tests passed after the fixes; the complete gates above then passed. This AI review does not satisfy GitHub's independent approval rule. |
+
+The wrapper checksum and all nine companion hashes also match the immutable deployment source `e0332ed582e4446d450aa1eb1391ae7345e02327`. GitHub Actions remains disabled; the sole preserved workflow is manual-only and no webhook is configured. No workflow, tag, official signing or release publication was performed.
+
+**Publication is blocked by protected-main integration, not a missing key:** main requires independent approval, code-owner review and latest-push approval with administrators enforced. The authenticated account is also the sole configured CODEOWNER and cannot self-approve. Preserve that protection; obtain legitimate integration, then rebuild/sign/publish the exact clean main commit locally and verify actual asset read-back/latest/updater discovery. The supplied key's correspondence was checked without logging it, but it was not used to sign dev candidates. Old-key evaluation installations need manual state-preserving migration.
 
 ### Workflow removal verification — 2026-11-02
 
@@ -48,7 +65,7 @@ All of the following ran on **2026-11-02** against clean **`ad8be19cd9d03d03d862
 
 The exact pinned Redocly command passed with zero errors and ten unsuppressed warnings: conditional required properties are defined in their parent schema, and the trailing `/uploads/` is the actual tus route. npm also reported unapproved install-script policy entries for pinned esbuild/fsevents, while its install/audit gates passed; no approval policy was silently changed. The documentation branch additionally validated 68 schema fixtures and 79-operation router coverage; those are static checks, not deployment proof.
 
-The complete Linux run at `f3b2161` **failed** in three packages: CLI fixtures inherited root-owned `GOTMPDIR`, the database oversized-file fixture exceeded the 1 GiB file-size limit, and SMTP cancellation sometimes lost the context deadline. Fixture corrections in `5c2887d` and notification handling in `3699cb4` resolved these failures; the complete rerun and refreshed packages passed at `78ee097` as recorded above. Earlier timeouts and `35fee4b` packages are historical, not substituted for these results. The newest packaged and fully Go-tested source is now **`ad8be19`**; later evidence-recording changes are documentation-only.
+The complete Linux run at `f3b2161` **failed** in three packages: CLI fixtures inherited root-owned `GOTMPDIR`, the database oversized-file fixture exceeded the 1 GiB file-size limit, and SMTP cancellation sometimes lost the context deadline. Fixture corrections in `5c2887d` and notification handling in `3699cb4` resolved these failures; the complete rerun and refreshed packages passed at `78ee097` as recorded above. Earlier timeouts and `35fee4b` packages are historical, not substituted for these results. The packaged and fully Go-tested source for those earlier drills was **`ad8be19`**; later evidence-recording changes were documentation-only. New local installer/release evidence is scoped separately above.
 
 ## Twelve required acceptance checks
 
@@ -97,7 +114,7 @@ Actual-schema enforcement from `59c429b` is now integrated at `16f6572`: online 
 
 ## Remaining release gates
 
-- Run and review local checks on the final source. Use only the explicitly authorized manual release run, preserving source/signature/provenance verification and restoring any narrowly approved policy exceptions. Local gates and package smokes do not prove publication; record the actual run, release and final disabled-Actions state.
+- Obtain legitimate protected-main integration, then rebuild and recheck that exact source locally before signing/publication. Preserve source/signature/provenance verification. Local gates and package smokes do not prove publication; record the actual release and asset read-back. Do not run workflows or weaken protections.
 - Complete all applicable disposable-host drills above on Linux/systemd; separately test Proxmox LXC before claiming that deployment is verified.
 - Confirm the installer and recovery guides against actual files and commands. A Compose panel is not a tested Minecraft Docker adapter.
 - Provide real external-provider and per-instance browser evidence; the committed screenshots cover the implemented empty-panel/account UI only.

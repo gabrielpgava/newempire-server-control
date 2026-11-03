@@ -6,10 +6,12 @@ import json
 import os
 import pathlib
 import re
+import selectors
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from urllib.parse import quote
 
 REPOSITORY = 'gabrielpgava/newempire-server-control'
@@ -17,6 +19,7 @@ WORKFLOW = f'{REPOSITORY}/.github/workflows/release.yml'
 CONVENTIONAL = re.compile(r'^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([^\r\n()]+\))?(!)?: [^\r\n]+$')
 SEMVER = re.compile(r'^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$')
 LEVELS = ['auto', 'patch', 'minor', 'major']
+TRANSFER_TIMEOUT = 60
 
 
 def run(*args, **kwargs):
@@ -100,7 +103,7 @@ def check_pr(event):
 
 class GitHub:
     def api(self, path, method='GET', data=None):
-        args = ['gh', 'api', '--method', method, f'repos/{REPOSITORY}/{path}']
+        args = ['gh', 'api', '--hostname', 'github.com', '--method', method, f'repos/{REPOSITORY}/{path}']
         if data is not None:
             args += ['--input', '-']
         raw = run(*args, input=json.dumps(data) if data is not None else None)
@@ -125,22 +128,37 @@ class GitHub:
             page += 1
 
     def download(self, asset, destination, limit):
-        args = ['gh', 'api', f'repos/{REPOSITORY}/releases/assets/{asset["id"]}',
+        args = ['gh', 'api', '--hostname', 'github.com', f'repos/{REPOSITORY}/releases/assets/{asset["id"]}',
                 '-H', 'Accept: application/octet-stream']
+        deadline = time.monotonic() + TRANSFER_TIMEOUT
         with subprocess.Popen(args, stdout=subprocess.PIPE) as process:
-            with destination.open('xb') as output:
-                size = 0
-                while chunk := process.stdout.read(1 << 20):
-                    size += len(chunk)
-                    if size > limit:
-                        process.kill()
-                        raise ValueError(f'Download exceeds the expected size: {asset["name"]}')
-                    output.write(chunk)
-            if process.wait(timeout=60) != 0:
-                raise ValueError(f'Could not download draft asset: {asset["name"]}')
+            try:
+                with destination.open('xb') as output, selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    size = 0
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not selector.select(remaining):
+                            raise ValueError(f'Timed out downloading draft asset: {asset["name"]}')
+                        chunk = os.read(process.stdout.fileno(), 1 << 20)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > limit:
+                            raise ValueError(f'Download exceeds the expected size: {asset["name"]}')
+                        output.write(chunk)
+                try:
+                    status = process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    raise ValueError(f'Timed out downloading draft asset: {asset["name"]}') from None
+                if status != 0:
+                    raise ValueError(f'Could not download draft asset: {asset["name"]}')
+            finally:
+                if process.poll() is None:
+                    process.kill()
 
     def upload(self, tag, path):
-        run('gh', 'release', 'upload', tag, str(path), '--repo', REPOSITORY)
+        run('gh', 'release', 'upload', tag, str(path), '--repo', f'github.com/{REPOSITORY}')
 
 
 def guard(github, sha):
@@ -155,6 +173,37 @@ def guard(github, sha):
     branch = github.api('branches/main')
     if not branch['protected'] or branch['commit']['sha'] != sha:
         raise ValueError('main is unprotected or advanced; run the workflow at its current SHA')
+
+
+def guard_local(github, sha):
+    if (not re.fullmatch('[0-9a-f]{40}', sha)
+            or run('git', 'rev-parse', 'HEAD') != sha
+            or run('git', 'branch', '--show-current') != 'main'
+            or run('git', 'status', '--porcelain', '--untracked-files=normal')):
+        raise ValueError('Local publication requires exact clean main sources')
+    if run('git', 'remote', 'get-url', 'origin') not in (
+            f'https://github.com/{REPOSITORY}.git', f'https://github.com/{REPOSITORY}',
+            f'git@github.com:{REPOSITORY}.git'):
+        raise ValueError('Local publication requires the official origin repository')
+    for name in run('git', 'ls-files', '-z', '--', '.github/workflows').split('\x00'):
+        path = pathlib.Path(name)
+        if not name or path.suffix not in ('.yaml', '.yml'):
+            continue
+        text = '\n' + path.read_text() if not path.is_symlink() else ''
+        keys = [re.fullmatch(r'([a-z][a-z_-]*):.*', line) for line in text.splitlines()
+                if line and not line[0].isspace() and not line.startswith('#')]
+        if (any(key is None for key in keys) or [key[1] for key in keys].count('on') != 1
+                or text.count('\non:\n') != 1):
+            raise ValueError('Cannot verify workflow triggers; local publication stopped')
+        triggers = re.split(r'\n(?=\S)', text.split('\non:\n', 1)[1], maxsplit=1)[0]
+        events = [line for line in triggers.splitlines() if line.strip()
+                  and not line.lstrip().startswith('#') and not line.startswith('    ')]
+        if (events != ['  workflow_dispatch:']
+                or any(value in triggers for value in ('\t', '*', '&', '<<:'))):
+            raise ValueError('A workflow may run automatically; local publication stopped')
+    branch = github.api('branches/main')
+    if not branch['protected'] or branch['commit']['sha'] != sha:
+        raise ValueError('main is unprotected or advanced; local publication stopped')
 
 
 def marker(sha):
@@ -172,8 +221,9 @@ def validate_draft(release, plan):
 def plan_release(args):
     sha = run('git', 'rev-parse', 'HEAD')
     github = GitHub()
+    local = getattr(args, 'local', False)
     if args.live:
-        guard(github, sha)
+        (guard_local if local else guard)(github, sha)
     tags = run('git', 'tag', '--merged', sha).splitlines()
     # Select the baseline before reading messages; prerelease tags never become it.
     _, base = next_version(tags, [])
@@ -184,8 +234,8 @@ def plan_release(args):
     result, _ = next_version(tags, messages, bump, channel)
     retry = os.environ.get('RELEASE_RETRY_TAG', '')
     if retry:
-        if not args.live or os.environ.get('GITHUB_EVENT_NAME') != 'workflow_dispatch':
-            raise ValueError('Draft retry requires an explicit workflow_dispatch run')
+        if not args.live or (not local and os.environ.get('GITHUB_EVENT_NAME') != 'workflow_dispatch'):
+            raise ValueError('Draft retry requires explicit local live planning or workflow_dispatch')
         core, pre = version(retry)
         if not retry.startswith('v') or not result or core != version(result)[0]:
             raise ValueError('Retry tag must match the computed release version core')
@@ -221,7 +271,7 @@ def plan_release(args):
             raise ValueError('Tag exists without its expected draft; refusing reuse')
     if args.output:
         pathlib.Path(args.output).write_text(json.dumps(plan, indent=2) + '\n')
-    if args.live:
+    if args.live and not local:
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write(f'version={result}\n')
     print(json.dumps(plan, indent=2))
@@ -232,10 +282,11 @@ def digest(path):
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
-def expected_assets(directory, release_version):
+def expected_assets(directory, release_version, local=False):
     names = {f'new-empire-control_{release_version}_linux_{arch}.tar.gz' for arch in ('amd64', 'arm64')}
     names |= {'documentation.tar.gz', 'sbom.cdx.json', 'checksums.txt',
-              'release.json', 'release.json.sig', 'provenance.jsonl'}
+              'release.json', 'release.json.sig'}
+    names |= {'provenance.json', 'provenance.json.sig'} if local else {'provenance.jsonl'}
     paths = list(directory.iterdir())
     if {path.name for path in paths} != names or any(path.is_symlink() or not path.is_file() for path in paths):
         raise ValueError('Release directory must contain exactly the required regular assets')
@@ -253,17 +304,27 @@ def verify_provenance(directory, plan):
             '--deny-self-hosted-runners')
 
 
+def verify_assets(tool, directory, plan, local):
+    if local:
+        run(tool, 'verify-local', '-dir', str(directory),
+            '-version', plan['version'], '-commit', plan['commit'])
+    else:
+        run(tool, 'verify', '-dir', str(directory))
+        verify_provenance(directory, plan)
+
+
 def publish(args, github=None):
     github = github or GitHub()
     plan = json.loads(pathlib.Path(args.plan).read_text())
     if (plan['repository'] != REPOSITORY or plan['tag'] != 'v' + plan['version']
             or bool(version(plan['version'])[1]) != plan['prerelease']):
         raise ValueError('Invalid release plan identity or version')
-    guard(github, plan['commit'])
+    local = getattr(args, 'local', False)
+    validate_source = guard_local if local else guard
+    validate_source(github, plan['commit'])
     directory = pathlib.Path(args.assets).resolve()
-    expected = expected_assets(directory, plan['version'])
-    run(args.tool, 'verify', '-dir', str(directory))
-    verify_provenance(directory, plan)
+    expected = expected_assets(directory, plan['version'], local)
+    verify_assets(args.tool, directory, plan, local)
     releases = [row for row in github.releases() if row['tag_name'] == plan['tag']]
     if len(releases) > 1:
         raise ValueError('Duplicate releases require manual investigation')
@@ -291,7 +352,7 @@ def publish(args, github=None):
             name = asset['name']
             # Attestations include fresh timestamps. Reuse a prior bundle only if
             # it verifies these exact payloads and this same protected-main SHA.
-            if name == 'provenance.jsonl' and plan['retry'] and 0 < asset['size'] <= 16 << 20:
+            if not local and name == 'provenance.jsonl' and plan['retry'] and 0 < asset['size'] <= 16 << 20:
                 github.download(asset, downloaded / name, asset['size'])
                 expected[name] = (asset['size'], digest(downloaded / name))
                 if asset['state'] != 'uploaded':
@@ -316,9 +377,8 @@ def publish(args, github=None):
                 github.download(asset, downloaded / name, expected[name][0])
             if digest(downloaded / name) != expected[name][1]:
                 raise ValueError('Read-back SHA-256 differs; draft remains unpublished')
-        run(args.tool, 'verify', '-dir', str(downloaded))
-        verify_provenance(downloaded, plan)
-    guard(github, plan['commit'])
+        verify_assets(args.tool, downloaded, plan, local)
+    validate_source(github, plan['commit'])
     validate_draft(github.api(f'releases/{release_id}'), plan)
     # A tag may have been created independently. Resolve annotated tags too.
     tags = run('git', 'ls-remote', '--tags', f'https://github.com/{REPOSITORY}.git',
@@ -399,11 +459,13 @@ def main():
     output.add_argument('--output', required=True)
     plan = commands.add_parser('plan', help='Read-only dry-run unless --live is given')
     plan.add_argument('--live', action='store_true')
+    plan.add_argument('--local', action='store_true', help='Validate local protected-main identity, not workflow context')
     plan.add_argument('--output')
     release = commands.add_parser('publish')
     release.add_argument('--plan', required=True)
     release.add_argument('--assets', required=True)
     release.add_argument('--tool', required=True)
+    release.add_argument('--local', action='store_true', help='Verify signed local provenance instead of GitHub attestations')
     bill = commands.add_parser('sbom')
     for name in ('version', 'commit', 'output'):
         bill.add_argument('--' + name, required=True)

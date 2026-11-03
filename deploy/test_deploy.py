@@ -59,6 +59,51 @@ def manifest(data):
     ]}
 
 
+class InstallerDefaultsTests(unittest.TestCase):
+    def test_discovers_and_resolves_installed_java(self):
+        self.assertTrue(callable(getattr(installer, "approved_java", None)), "Java discovery is missing")
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = pathlib.Path(temporary) / "java-real"
+            executable.write_text("runtime fixture")
+            alias = pathlib.Path(temporary) / "java"
+            alias.symlink_to(executable)
+            with mock.patch.object(installer.shutil, "which", return_value=str(alias)), mock.patch.object(installer, "program") as checked:
+                self.assertEqual(installer.approved_java(None), [str(executable.resolve())])
+                checked.assert_called_once_with(str(executable.resolve()))
+
+    def test_missing_or_untrusted_java_stops(self):
+        self.assertTrue(callable(getattr(installer, "approved_java", None)), "Java discovery is missing")
+        with mock.patch.object(installer.shutil, "which", return_value=None), self.assertRaisesRegex(ValueError, "Java"):
+            installer.approved_java(None)
+        with mock.patch.object(installer.shutil, "which", return_value="/usr/bin/python3"), mock.patch.object(installer, "program", side_effect=ValueError("untrusted executable")), self.assertRaisesRegex(ValueError, "untrusted"):
+            installer.approved_java(None)
+
+    def test_latest_selects_stable_version_for_fixed_version_downloads(self):
+        self.assertTrue(callable(getattr(installer, "latest_version", None)), "latest stable selection is missing")
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = pathlib.Path(temporary)
+
+            def downloaded(url, destination, limit):
+                self.assertEqual(url, "https://github.com/gabrielpgava/newempire-server-control/releases/latest/download/release.json")
+                self.assertEqual(limit, 65536)
+                destination.write_bytes(json.dumps(manifest(archive()), separators=(",", ":")).encode())
+
+            with mock.patch.object(installer, "download", side_effect=downloaded):
+                self.assertEqual(installer.latest_version(stage), "1.2.0")
+
+    def test_latest_rejects_prerelease_traversal_duplicate_and_wrong_repository(self):
+        self.assertTrue(callable(getattr(installer, "latest_version", None)), "latest stable selection is missing")
+        valid = manifest(archive())
+        invalid = [dict(valid, version=value) for value in ("1.2.0-beta.1", "../evil", "01.2.0", 123)]
+        invalid += [dict(valid, repository="attacker/fork")]
+        payloads = [json.dumps(value, separators=(",", ":")).encode() for value in invalid]
+        payloads += [b'{"version":"1.2.0","version":"9.9.9"}', b'[]', b'null']
+        for raw in payloads:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as temporary:
+                with mock.patch.object(installer, "download", side_effect=lambda url, path, limit: path.write_bytes(raw)), self.assertRaises((ValueError, TypeError, KeyError)):
+                    installer.latest_version(pathlib.Path(temporary))
+
+
 class InstallationAccessTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -292,6 +337,7 @@ class ReleaseVerificationTests(unittest.TestCase):
 
     def test_pinned_key_files_and_fingerprint(self):
         raw = base64.b64decode((HERE / "release-public-key.txt").read_text().strip(), validate=True)
+        self.assertEqual(base64.b64encode(raw).decode(), "5jtZuBvFVWvMMHZo5VCuP98GEOt1uxmzvSF+rBzzQlM=")
         pem = (HERE / "release-public-key.pem").read_text().splitlines()
         der = base64.b64decode("".join(pem[1:-1]), validate=True)
         self.assertEqual(der, vr.ED25519_DER_PREFIX + raw)

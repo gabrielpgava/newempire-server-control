@@ -5,8 +5,6 @@ import io
 import json
 import os
 import pathlib
-import re
-import shlex
 import socket
 import threading
 import time
@@ -66,7 +64,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_stage_matches_all_nine_pinned_source_files(self):
         self.require_bootstrap()
-        self.assertEqual(bootstrap.SOURCE_COMMIT, "0bc59f9cb537982048c4d1cbef355ccf982d072c")
+        self.assertRegex(bootstrap.SOURCE_COMMIT, r"^[0-9a-f]{40}$")
         self.assertEqual(set(bootstrap.FILES), set(NAMES))
         with tempfile.TemporaryDirectory() as temporary, self.transport():
             stage = pathlib.Path(temporary)
@@ -267,66 +265,6 @@ class BootstrapTests(unittest.TestCase):
         with mock.patch.object(bootstrap.os, "geteuid", return_value=1000), mock.patch.object(bootstrap.sys, "stderr", io.StringIO()), mock.patch.object(bootstrap, "stage_deployment") as stage:
             self.assertEqual(bootstrap.main(), 1)
         stage.assert_not_called()
-
-    def test_readme_pins_bootstrap_checksum_before_execution(self):
-        self.require_bootstrap()
-        readme = (HERE.parent / "README.md").read_text()
-        commands = [line for line in readme.splitlines() if "curl " in line and "bootstrap.py" in line]
-        self.assertEqual(len(commands), 1, "document exactly one physical installation command")
-        command = commands[0]
-        digest = hashlib.sha256((HERE / "bootstrap.py").read_bytes()).hexdigest()
-        self.assertIn(digest, command)
-        self.assertLess(command.index("sha256sum"), command.index('/usr/bin/python3 -I "$work/bootstrap.py"'))
-        self.assertIn('"${VERSION:?', command)
-        self.assertIn('"${JAVA_EXECUTABLE:?', command)
-        self.assertNotRegex(command, r"curl[^;]*\|\s*(?:sudo\s+)?(?:sh|bash|python)")
-        self.assertRegex(command, r'--proto [\x22\x27]=https[\x22\x27]')
-        self.assertIn("--max-time", command)
-
-    def test_readme_initial_fetch_rejects_private_dns_and_checksum_correct_redirects(self):
-        line = next(line for line in (HERE.parent / "README.md").read_text().splitlines() if "curl " in line and "bootstrap.py" in line)
-        arguments = shlex.split(line)
-        original = arguments[arguments.index("-c") + 1]
-        digest = hashlib.sha256((HERE / "bootstrap.py").read_bytes()).hexdigest()
-        for addresses, status, accepted in ((["127.0.0.1"], "200", False), (["93.184.216.34", "10.0.0.1"], "200", False), (["93.184.216.34"], "302", False), (["93.184.216.34"], "200", True), (["2606:4700::1111"], "200", True)):
-            with self.subTest(addresses=addresses, status=status), tempfile.TemporaryDirectory() as temporary:
-                root = pathlib.Path(temporary)
-                (root / "timeout.py").write_text('''import json, os, socket, sys
-from unittest.mock import patch
-assert sys.argv[1:5] == ["10", "/usr/bin/python3", "-I", "-c"]
-values = [(socket.AF_INET6 if ":" in value else socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (value, 443)) for value in json.loads(os.environ["DNS_VALUES"])]
-with patch("socket.getaddrinfo", return_value=values):
-    exec(sys.argv[5], {"__name__": "__main__"})
-''')
-                (root / "curl.py").write_text('''import json, os, pathlib, sys
-pathlib.Path(os.environ["TRACE"]).write_text(json.dumps(sys.argv[1:]))
-pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_bytes(pathlib.Path(os.environ["PAYLOAD"]).read_bytes())
-print(os.environ["HTTP_STATUS"], end="")
-''')
-                (root / "executed.py").write_text('import os, pathlib; pathlib.Path(os.environ["EXECUTED"]).write_text("called")\n')
-                python = shlex.quote(bootstrap.sys.executable)
-                body = original.replace("PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH;", "")
-                body = body.replace("-d /root/new-empire-bootstrap.XXXXXXXX", "-d " + shlex.quote(str(root / "work.XXXXXXXX")))
-                body = body.replace("curl --disable", python + " -I " + shlex.quote(str(root / "curl.py")) + " --disable")
-                body = body.replace("timeout 10 /usr/bin/python3", python + " -I " + shlex.quote(str(root / "timeout.py")) + " 10 /usr/bin/python3")
-                body = body.replace('/usr/bin/python3 -I "$work/bootstrap.py"', python + " -I " + shlex.quote(str(root / "executed.py")) + ' "$work/bootstrap.py"')
-                if bootstrap.sys.platform == "darwin":
-                    body = body.replace("sha256sum --check --status", "/usr/bin/shasum -a 256 --check --status")
-                body = re.sub(r"\b[0-9a-f]{64}\b", digest, body)
-                environment = {"PATH": "/usr/bin:/bin", "HOME": temporary, "DNS_VALUES": json.dumps(addresses), "HTTP_STATUS": status, "PAYLOAD": str(HERE / "bootstrap.py"), "TRACE": str(root / "trace"), "EXECUTED": str(root / "executed")}
-                result = bootstrap.subprocess.run(["/bin/sh", "-c", body, "sh", "1.2.3", "/usr/lib/jvm/example/bin/java"], env=environment, stdout=bootstrap.subprocess.PIPE, stderr=bootstrap.subprocess.PIPE, timeout=3)
-                self.assertEqual((root / "executed").exists(), accepted, result.stderr.decode())
-                if any(not bootstrap.ipaddress.ip_address(value).is_global for value in addresses):
-                    self.assertFalse((root / "trace").exists(), "private DNS reached curl")
-                if accepted:
-                    self.assertEqual(result.returncode, 0)
-                    curl_arguments = json.loads((root / "trace").read_text())
-                    self.assertIn("--resolve", curl_arguments)
-                    self.assertIn("--noproxy", curl_arguments)
-                    target = "[" + addresses[0] + "]" if ":" in addresses[0] else addresses[0]
-                    self.assertEqual(curl_arguments[curl_arguments.index("--resolve") + 1], "raw.githubusercontent.com:443:" + target)
-                    self.assertEqual(curl_arguments[curl_arguments.index("--noproxy") + 1], "*")
-
 
 if __name__ == "__main__":
     unittest.main()

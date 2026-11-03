@@ -17,12 +17,13 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Locked offline backup, retained-data recovery and emergency owner access without a running HTTP panel; existing-state-only loading and targeted durable jobs prevent accidental bootstrap or unrelated queued execution.
 - English public-product guides, OpenAPI 3.1 schemas, upstream references, and an acceptance-evidence matrix.
 - Native installer access summary with the configured dashboard URL, informational private interface addresses, service-resolved data paths, and protected first-owner code display only on an interactive terminal; redirected output never reads the code.
-- Checksum-verified one-line Linux bootstrap that stages nine hash-pinned deployment files from an immutable official source revision, with public-address pinning, HTTP-200-only responses and complete-transfer timeouts, before invoking the existing signed-release/systemd installer; official release installation remains blocked until a signed release is published.
+- Short `curl | bash` Linux installer with latest-stable release selection and trusted installed-Java discovery. The initial GitHub script is explicitly trusted; its subsequent bootstrap and nine immutable-source deployment files are checksum-verified before signed-release/systemd installation.
 - `make dist VERSION=... OUT=...` for unsigned embedded-UI Linux amd64/arm64 packages and a source-bound SBOM, plus read-only `make release-plan`.
-- Owner-authorized manual-only release publication with environment-scoped signing, protected-main provenance, draft read-back verification and truthful acceptance limitations; Actions remains disabled outside individually authorized runs.
+- Entirely local release signing/publication with protected-main identity checks, deterministic signed source-bound provenance covering all payloads/checksums, and draft asset read-back before publication. No workflow or cloud runner is used.
 
 ### Fixed
 
+- Reject ambiguous or automatic workflow triggers before local publication, pin GitHub operations to the official host, and abort/reap stalled draft downloads without modifying candidates or publishing.
 - Validate portable backup instance metadata before stopping Minecraft or replacing world data; restore archived service memory settings as well as Java/launcher choices.
 - Keep interrupted full-tree restores blocked until explicitly selected data and runtime metadata are reconciled against a verified snapshot; never automatically replace a world during reconciliation.
 - Verify retained runtime recovery against the original snapshot, preserve displaced data, and latch world-format review before metadata replacement.
@@ -37,6 +38,7 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Redact known RCON credentials from console/player job output and errors.
 - Include older conventional commit subjects in release planning even when the newest commit is documentation or a smaller repair.
 - Consolidate TypeScript 7 and React plugin 6 updates with Vite client declarations and a compatible Vite 8 toolchain, without bypassing peer dependency checks.
+- Synchronize the owner's explicitly selected initial Ed25519 trust root across the CLI, installer and release tooling. Unreleased old-key builds require a reviewed manual migration/reinstallation; automatic cross-key trust is not supported.
 
 ### Removed
 

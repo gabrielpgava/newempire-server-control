@@ -31,7 +31,7 @@ import (
 
 var version = "dev"
 var commit = "unknown"
-var releasePublicKey = "DVI1QlV02lloZudVLPo64ZEOjQiEQR5PKyMlA+eVdG8="
+var releasePublicKey = "5jtZuBvFVWvMMHZo5VCuP98GEOt1uxmzvSF+rBzzQlM="
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))

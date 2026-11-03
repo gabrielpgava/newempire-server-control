@@ -1,0 +1,41 @@
+{
+  "date": "2026-11-03",
+  "source_commit": "bd7cfe5026b952268b120a565caee45ae455a0e4",
+  "version": "0.1.0",
+  "official_release": false,
+  "signing": "Unsigned candidates. A separate 0.0.0-dev.3 dry-run passed with an ephemeral in-memory key; no official signature, tag or release was created.",
+  "checks": {
+    "make_check": "passed",
+    "frontend_tests": 108,
+    "python_script_tests": 42,
+    "deployment_tests": 43,
+    "go_race_packages": "all passed",
+    "openapi_warnings": 10,
+    "make_security": "passed",
+    "go_advisory_database_modified": "2026-11-02T22:01:43Z",
+    "reachable_go_vulnerabilities": 0,
+    "module_only_advisories": 1,
+    "production_npm_vulnerabilities": 0
+  },
+  "environment": "Local macOS arm64 / network-disabled Linux Docker; Go 1.27.3 and Node 26.13.0; read-only inputs, clean environment, bounded private scratch and isolated ACL fixtures. Fresh official advisory data was fetched as data by the parent and replayed offline.",
+  "architectures": [
+    {
+      "architecture": "amd64",
+      "archive": "new-empire-control_0.1.0_linux_amd64.tar.gz",
+      "size": 7178246,
+      "archive_sha256": "2777d5e3bb42b6f3bae515ddf6b7ddfd153471313505d4574832e6d0e1c74a2d",
+      "version_json": "passed: version 0.1.0, exact source commit, schema 1 and official repository",
+      "execution": "amd64 ELF under local Docker Desktop emulation on arm64 macOS; UID/GID 65534, no network or host services, no Node/Go on the panel PATH"
+    },
+    {
+      "architecture": "arm64",
+      "archive": "new-empire-control_0.1.0_linux_arm64.tar.gz",
+      "size": 6623152,
+      "archive_sha256": "f82162b995d43945bc55fe6330a7cfb2225ea35ce850e728c3a630360ae7c61c",
+      "version_json": "passed: version 0.1.0, exact source commit, schema 1 and official repository",
+      "execution": "arm64 ELF in local Docker Desktop on arm64 macOS; UID/GID 65534, no network or host services, no Node/Go on the panel PATH"
+    }
+  ],
+  "scope": "Binary-only archive, ELF architecture, manifest size/hash and actual version --json identity. No fresh HTTP, systemd, Minecraft, backup/restore, firewall or official updater/rollback acceptance is claimed.",
+  "publication_blocker": "Protected main requires independent code-owner/latest-push approval with administrators enforced. The authenticated account is the sole configured CODEOWNER and cannot self-approve. Preserve protection; integrate legitimately, then rebuild/sign/publish exact main locally."
+}

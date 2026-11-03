@@ -17,20 +17,21 @@ frontend and does not require Node.js.
   Minecraft/Fabric metadata, not a guessed Java version.
 - A root administrator for initial setup. The HTTP panel always runs as the
   non-login `new-empire-control` account, never root.
-- For the one-line bootstrap: curl, `sha256sum`, `mktemp`, `timeout`, sudo access, and a
+- For the one-line bootstrap: Bash, curl, `sha256sum`, `mktemp`, `timeout`, sudo access, and a
   root-owned `/root` directory for private staging.
 
-Download/review the deployment asset from the official
-`gabrielpgava/newempire-server-control` release using its authenticated provenance.
-Extract it under a root-owned directory such as `/root/new-empire-deploy`.
-Do not execute `curl | sh`. A deployment script is executable code: verifying the
-later native archive does not authenticate a maliciously replaced installer.
+The short command below trusts the current official GitHub installer script.
+A deployment script is executable code: verifying the later native archive does
+not authenticate a maliciously replaced initial installer. For review/offline
+installation, authenticate `documentation.tar.gz` using its signed local
+provenance, review it and extract under a root-owned directory such as
+`/root/new-empire-deploy`; its companion installer is in `deploy/`.
 Do not use an installer/key from a fork or an unauthenticated third-party host.
 
 The embedded Ed25519 raw-public-key SHA-256 fingerprint is:
 
 ```text
-dd6804fd279cc3935f9dc3669dc900d81f7e1d0a1382b67f007568a615e5bd7f
+d7ab48a9fa4414e04027255f140f6677a451e868470e14ef3c64770420d81a7f
 ```
 
 `deploy/release-public-key.pem` and `deploy/release-public-key.txt` contain that
@@ -38,21 +39,33 @@ public key. The installer pins the same key/fingerprint; a replacement key is
 rejected even if its manifest signature is internally valid. No private key
 belongs on the Minecraft host. Trust keys are never fetched beside the assets.
 
-## Verified one-line bootstrap
+The owner replaced the initial unreleased trust root on 2026-11-03. Builds using
+the former key cannot automatically trust this key: use an explicitly reviewed
+manual migration/reinstallation, preserving configuration and panel state. Do not
+delete an existing installation or its data to work around a key mismatch.
 
-The [README command](../../README.md#verified-one-line-installation) downloads a
-small bootstrap, verifies the documented SHA-256, then runs it as root. It does
-not execute an unauthenticated `curl | sh` response. It requires the same explicit
-stable `VERSION` and approved `JAVA_EXECUTABLE` as the installer below. **No
-official signed release is published yet; release installation remains blocked.**
+## One-line bootstrap
 
-The initial command bounds DNS lookup to ten seconds, refuses empty or non-public
+```sh
+curl -fsSL https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/install.sh | bash
+```
+
+The root-level `install.sh` works when piped into Bash and requests sudo when
+needed. It discovers Java from the fixed system PATH and resolves its trusted
+root-owned executable; it never installs a JRE. An absent or unsafe Java fails
+with instructions to install a compatible runtime or pass `--java` explicitly.
+It selects a canonical stable version from official latest-release metadata,
+then fetches that exact version's manifest, signature and archive for verification.
+Changing `latest` during the operation cannot mix versions. An unpublished or
+unsigned release cannot be installed.
+
+The script's bootstrap fetch bounds DNS lookup to ten seconds, refuses empty or non-public
 results, pins a validated address for curl, disables proxy selection, and requires
 HTTP 200 within thirty seconds before checking the bootstrap checksum. A redirect
 response is refused even if its body happens to match the expected checksum.
 
 The bootstrap downloads exactly nine deployment files from the official
-repository at immutable commit `0bc59f9cb537982048c4d1cbef355ccf982d072c`.
+repository at the immutable `SOURCE_COMMIT` recorded in `deploy/bootstrap.py`.
 Each file must match its embedded SHA-256 before any installer code runs. Downloads
 use normal TLS certificate/hostname verification, reject non-public DNS results
 and redirects, and are bounded to 64 KiB per file. A separate worker bounds the
@@ -66,13 +79,14 @@ publisher or an unsigned-install fallback.
 
 Maintainers: after changing any pinned deployment file, commit/review that change
 first, then update `SOURCE_COMMIT` and all nine hashes in `deploy/bootstrap.py`.
-Update the README bootstrap checksum after every bootstrap change. Run the
-deployment tests and local gates before pushing; the tests check the README
-checksum and pinned file contents. Do not silently rotate the production key.
+Update the root `install.sh` bootstrap checksum after every bootstrap change. Run
+the behavioral entrypoint/deployment tests and local gates before pushing. Never
+replace the production key without explicit owner authorization and a migration plan.
 
 ## Install an explicit stable release
 
-From the reviewed, root-owned deployment directory:
+From the reviewed, root-owned deployment directory's `deploy/` subdirectory
+(this companion wrapper is distinct from the pipe-compatible root script):
 
 ```sh
 sudo sh ./install.sh --version "$VERSION" --java "$JAVA_EXECUTABLE"
