@@ -2,7 +2,7 @@
 
 A browser-based control panel for headless Minecraft Java/Fabric servers. Go serves a versioned API and an embedded React interface; SQLite keeps configuration, audit history, schedules, and durable jobs. Linux with systemd is the primary runtime.
 
-**Status: unreleased.** No published version or installable GitHub Release is confirmed. The implementation is being integrated and must pass the [acceptance checks](docs/acceptance.md) before use with valuable worlds. A public repository is not evidence of a tested deployment.
+**Status: evaluation-stage software.** Install only an authenticatable build listed in the [official GitHub Releases](https://github.com/gabrielpgava/newempire-server-control/releases). Release availability is separate from the [acceptance checks](docs/acceptance.md) required before use with valuable worlds; a public repository or published asset is not evidence of a tested deployment.
 
 ## What is in the project
 
@@ -53,10 +53,9 @@ go build -o new-empire-control ./cmd/control
 
 ### Verified one-line installation
 
-**Not available for release installation yet:** no official signed release is
-published, and this bootstrap must first be integrated into `main`. Do not use
-an unsigned local build as a replacement. Once available, select an actual
-published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
+**Requires an actual published signed release:** if the official Releases page
+has none, this command cannot install the application. Do not substitute an
+unsigned local build. Select a published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
 administrator-approved absolute Java executable path before running this line:
 
 ```sh
@@ -154,7 +153,9 @@ Actual implemented UI: [desktop](docs/evidence/ui/desktop-account.png) · [mobil
 
 Read [AGENTS.md](AGENTS.md) before contributing. Keep code, tests, English documentation, migrations, and OpenAPI synchronized. Use Conventional Commits. A significant feature requires a versioned release after trusted-branch checks pass; do not publish incomplete or untested code just to create a tag.
 
-GitHub Actions workflows have been removed at the owner's request to avoid runner costs. Run `make check` and `make security` locally. Automatic releases are disabled, and official publication is blocked pending an approved trusted publication process; see [releases](docs/releases.md). Remote branch rules and existing workflow runs are not changed by removing these files.
+Run `make check` and `make security` locally. `make build` creates the host binary; `make dist VERSION=0.0.0-dev.1 OUT=dist/local-evaluation` creates unsigned Linux amd64/arm64 packages with embedded UI and an SBOM from clean committed source. These are evaluation candidates, not official installation/update assets. `make release-plan` previews the next version without publishing.
+
+Automatic CI and releases remain disabled. The [manual release workflow](docs/releases.md) requires explicit owner authorization for each run, protected-main source, environment approval, signing and provenance; GitHub Actions must be disabled again when it finishes, including on failure.
 
 The required release output includes Linux amd64/arm64 binaries with the embedded UI, machine-readable metadata, checksums, and authenticated signatures/provenance. Signing configuration, publication, self-update discovery, and a real-host rollback drill are release gates, not assumed successes. Until a release is actually published, use source builds for evaluation only.
 

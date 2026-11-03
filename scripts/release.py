@@ -180,7 +180,16 @@ def plan_release(args):
             'tag': f'v{result}' if result else '', 'prerelease': channel != 'stable',
             'base': base, 'retry': bool(retry)}
     notes = run('git', 'log', '--format=- %h %s%n%b', revision)
-    plan['body'] = f'## Changes\n\n{notes or "Manual maintenance release."}\n\n{marker(sha)}'
+    plan['body'] = (
+        f'## Changes\n\n{notes or "Manual maintenance release."}\n\n'
+        '## Verification limits\n\n'
+        'Verified assets and local tests do not certify production readiness. '
+        'Evaluate with disposable data before using valuable worlds. '
+        'Minecraft sustained readiness, complete restart/online-backup/restore/firewall '
+        'drills and official signed installation/update/rollback acceptance remain unverified. '
+        'Publication alone does not prove that an update leaves a running Minecraft instance unchanged.\n\n'
+        f'Consult the [source-bound acceptance ledger](https://github.com/{REPOSITORY}/blob/{sha}/docs/acceptance.md) '
+        f'for recorded evidence and remaining gaps.\n\n{marker(sha)}')
     if args.live and result:
         existing = [row for row in github.releases() if row['tag_name'] == plan['tag']]
         if len(existing) > 1:

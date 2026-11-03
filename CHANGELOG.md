@@ -18,6 +18,8 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - English public-product guides, OpenAPI 3.1 schemas, upstream references, and an acceptance-evidence matrix.
 - Native installer access summary with the configured dashboard URL, informational private interface addresses, service-resolved data paths, and protected first-owner code display only on an interactive terminal; redirected output never reads the code.
 - Checksum-verified one-line Linux bootstrap that stages nine hash-pinned deployment files from an immutable official source revision, with public-address pinning, HTTP-200-only responses and complete-transfer timeouts, before invoking the existing signed-release/systemd installer; official release installation remains blocked until a signed release is published.
+- `make dist VERSION=... OUT=...` for unsigned embedded-UI Linux amd64/arm64 packages and a source-bound SBOM, plus read-only `make release-plan`.
+- Owner-authorized manual-only release publication with environment-scoped signing, protected-main provenance, draft read-back verification and truthful acceptance limitations; Actions remains disabled outside individually authorized runs.
 
 ### Fixed
 
@@ -34,10 +36,11 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Block conflicting edits while content readiness/recovery is pending, reject duplicate mod adoption, and preserve unmanaged mods during automatic-safe maintenance.
 - Redact known RCON credentials from console/player job output and errors.
 - Include older conventional commit subjects in release planning even when the newest commit is documentation or a smaller repair.
+- Consolidate TypeScript 7 and React plugin 6 updates with Vite client declarations and a compatible Vite 8 toolchain, without bypassing peer dependency checks.
 
 ### Removed
 
-- GitHub Actions CI/release workflows, their Dependabot update entry, and local actionlint invocation at the owner's request to avoid runner costs. Local validation/security commands and signed-update verification remain; automatic publication is disabled and trusted release publication is blocked pending an approved replacement process.
+- Automatic GitHub Actions CI/release triggers and their Dependabot update entry to avoid runner costs. Local validation/security commands and signed-update verification remain; only explicitly authorized manual publication is available.
 
 ### Project policy
 

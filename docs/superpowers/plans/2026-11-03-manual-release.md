@@ -41,10 +41,12 @@
 **Files:** `Makefile`, `.github/workflows/release.yml`, `scripts/release_test.py`, `scripts/release.py`, `AGENTS.md`, README and development/release/testing/acceptance documentation, `CHANGELOG.md`.
 **Interfaces:** `make dist VERSION=<version> OUT=<new-directory>` calls existing Go build and Python SBOM modes; `make release-plan` calls the read-only planner. Workflow uses the existing guarded planner/signer/publisher without changing its trust identity.
 
-- [ ] Add failing tests for missing-version refusal, distro command composition, manual-only workflow permissions/secret confinement and truthful release-note limitations.
-- [ ] Implement the minimal Makefile targets and adapt the reviewed historical workflow without its automatic triggers or reusable CI job.
-- [ ] Include known acceptance limitations in generated English release notes and update policy/docs for the explicitly authorized manual exception.
-- [ ] Run script/deployment tests and pinned actionlint; commit only the owned changes.
+- [x] Add failing tests for missing-version refusal, distro command composition, manual-only workflow permissions/secret confinement and truthful release-note limitations.
+- [x] Implement the minimal Makefile targets and adapt the reviewed historical workflow without its automatic triggers or reusable CI job.
+- [x] Include known acceptance limitations in generated English release notes and update policy/docs for the explicitly authorized manual exception.
+- [x] Run script/deployment tests and pinned actionlint; commit only the owned changes.
+
+Task 2 verification: isolated script tests 26/26, isolated root deployment tests 38/38, pinned actionlint v1.7.12, whitespace checks and 49 relative documentation links passed. No remote execution or publication has occurred.
 
 ### Task 3: Verify and conduct the bounded release transaction
 
