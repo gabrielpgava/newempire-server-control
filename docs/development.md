@@ -39,7 +39,9 @@ commands locally and attach results to the PR. The sole approved workflow is
 manual release publication; each run needs explicit owner authorization and
 Actions must be disabled afterward, even on failure. No automatic validation
 workflow or trigger is restored. `make dist` requires a version, clean committed
-source and a new output directory; it never signs or publishes its candidates.
+source and a new output directory outside the checkout or Git-ignored (such as
+`dist/local-evaluation`). Existing outputs, including dangling symlinks, are
+rejected before frontend work; it never signs or publishes its candidates.
 
 The normal commands run application tests on your machine. For isolation use
 the repository's separately maintained `scripts/test-sandbox.sh` via

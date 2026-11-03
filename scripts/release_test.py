@@ -118,6 +118,59 @@ class LocalDistribution(unittest.TestCase):
         self.assertNotIn('npm --prefix', result.stdout)
         self.assertNotIn('go run', result.stdout)
 
+    def refusal(self, output, message):
+        with tempfile.TemporaryDirectory() as temporary:
+            override = pathlib.Path(temporary) / 'frontend.mk'
+            override.write_text('frontend:\n\t@echo FRONTEND_STARTED; exit 97\n')
+            result = self.make('-f', 'Makefile', '-f', str(override), 'dist',
+                               f'MAKE=make -f Makefile -f "{override}"',
+                               'VERSION=1.2.3', f'OUT={output}')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(message, result.stderr)
+        self.assertNotIn('FRONTEND_STARTED', result.stdout)
+        self.assertNotIn('go run', result.stdout)
+
+    def test_existing_output_and_dangling_symlink_refuse_before_any_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            directory = root / 'directory'
+            directory.mkdir()
+            sentinel = directory / 'retained'
+            sentinel.write_bytes(b'keep existing output')
+            regular = root / 'file'
+            regular.write_bytes(b'keep existing file')
+            dangling = root / 'dangling'
+            dangling.symlink_to(root / 'missing')
+            for output in (directory, regular, dangling):
+                with self.subTest(output=output.name):
+                    self.refusal(str(output), 'release output must not already exist')
+            self.assertEqual(sentinel.read_bytes(), b'keep existing output')
+            self.assertEqual(regular.read_bytes(), b'keep existing file')
+            self.assertTrue(dangling.is_symlink())
+
+    def test_unignored_checkout_output_refuses_before_any_build(self):
+        self.refusal('candidate-output', 'release output must be outside the checkout or Git-ignored')
+
+    def test_output_preflight_accepts_only_ignored_or_external_new_directories(self):
+        self.assertTrue(hasattr(release, 'check_output'), 'The output preflight is missing')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary) / 'checkout'
+            root.mkdir()
+            subprocess.run(['git', 'init', '-q', str(root)], check=True, capture_output=True)
+            (root / '.gitignore').write_text('/dist/\n')
+            old = pathlib.Path.cwd()
+            try:
+                os.chdir(root)
+                for output in ('candidate-output', str(root / 'candidate-output'), '.git/output'):
+                    with self.subTest(rejected=output), self.assertRaisesRegex(ValueError, 'Git-ignored'):
+                        release.check_output(argparse.Namespace(output=output))
+                for output in ('dist/new-output', str(root / 'dist/new-output'), str(root.parent / 'external')):
+                    with self.subTest(accepted=output):
+                        release.check_output(argparse.Namespace(output=output))
+                        self.assertFalse(os.path.lexists(output))
+            finally:
+                os.chdir(old)
+
     def test_distribution_builds_frontend_both_architectures_and_sbom_without_signing(self):
         result = self.make('-n', 'dist', 'VERSION=1.2.3', 'OUT=dist/test-release')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -173,6 +226,19 @@ class ManualWorkflow(unittest.TestCase):
         self.assertIn('scripts/release.py publish --plan', publish)
         self.assertIn('subject-path: ${{ runner.temp }}/release-bundle/assets/*', publish)
         self.assertIn('name: ${{ needs.prepare.outputs.artifact_name }}', publish)
+
+    def test_secret_bearing_signer_is_built_in_publication_and_never_transferred(self):
+        prepare, publish = self.workflow().split('\n  publish:\n', 1)
+        self.assertNotIn('/release-tool', prepare)
+        self.assertIn('path: |\n            ${{ runner.temp }}/release-bundle/plan.json\n            ${{ runner.temp }}/release-bundle/assets/', prepare)
+        build = 'go build -mod=readonly -o "$RUNNER_TEMP/release-tool" ./scripts/release'
+        self.assertIn(build, publish)
+        self.assertLess(publish.index(build), publish.index('secrets.RELEASE_SIGNING_KEY'))
+        self.assertIn('uses: actions/setup-go@', publish)
+        self.assertNotIn('npm ', publish)
+        self.assertNotIn('release-bundle/release-tool', publish)
+        self.assertIn('"$RUNNER_TEMP/release-tool" sign -dir', publish)
+        self.assertIn('--tool "$RUNNER_TEMP/release-tool"', publish)
 
 
 class ReleaseNotes(unittest.TestCase):

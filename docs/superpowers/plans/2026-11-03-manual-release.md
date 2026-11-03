@@ -24,7 +24,7 @@
 - Remaining dependency branches must typecheck and satisfy peers without suppression.
 - Forks, non-main refs and unprotected/stale source must not access signing/publication.
 - Secrets must stay confined to the signing step; provenance must cover the exact uploaded payloads.
-- Failed publication must leave an unpublished diagnostic draft and restored external controls.
+- Failed publication must be inspected for its actual draft/published state; restore external controls and never retry automatically.
 
 ### Task 1: Consolidate compatible frontend toolchain updates
 
@@ -53,7 +53,7 @@ Task 2 verification: isolated script tests 26/26, isolated root deployment tests
 **Files:** Plan/evidence documentation and existing remote PR/protection/environment/release records; no new publisher.
 **Interfaces:** Exact tested `dev` tree -> PR #7 squash -> protected `main` SHA -> one manual workflow run -> verified official release or explicit failure.
 
-- [ ] Obtain one fresh read-only whole-branch review; fix important findings test-first.
+- [x] Obtain one fresh read-only whole-branch review; fix important findings test-first.
 - [ ] Pass local `make check security`, isolated deployment tests, workflow lint and clean-source `make dist`; inspect ELF/UI/SBOM/source identities.
 - [ ] Push `dev`, update PR #7 without overwriting concurrent edits, snapshot controls and merge only the tested head using the authorized temporary review exception; restore reviews in `finally`.
 - [ ] Verify the merged tree and local main-identity build, enable Actions only for the single dispatch, approve only this run with the authorized temporary environment exception, restore it immediately and disable Actions in `finally`.

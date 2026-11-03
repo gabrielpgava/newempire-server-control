@@ -51,6 +51,7 @@ Full-tree restores persist `restore-pending:<instanceID>` before the data swap. 
 - Defend third-party downloads and URLs against SSRF and redirection into private networks; inspect source metadata and hashes.
 - Keep secrets out of logs, HTTP responses, and repository history; configure credential encryption/recovery.
 - Never allow unsigned or unverified panel auto-updates. Verify the expected official release identity, signature/attestation, checksum, architecture, and version policy.
+- Build the secret-bearing release signer from a fresh exact-SHA checkout in the protected publication job, without running npm there. Never execute a signer transferred from unsigned preparation.
 - Never grant a fork pull-request workflow write access to production credentials or GitHub release permissions.
 
 ## Required modules and definition of functional completeness

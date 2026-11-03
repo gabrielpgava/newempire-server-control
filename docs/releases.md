@@ -35,9 +35,11 @@ make dist VERSION=0.0.0-dev.1 OUT=dist/local-evaluation
 make release-dry-run
 ```
 
-`make dist` first builds the frontend, then reuses the existing Go packager for
-Linux amd64/arm64 and the Python SBOM generator. Its default output is
-`dist/release-<version>`; use a new `OUT` for each attempt. It requires clean
+`make dist` refuses existing outputs (including dangling symlinks) before any
+frontend work. A new `OUT` must be outside the checkout or Git-ignored, such as
+the default `dist/release-<version>`; unignored files would invalidate Go's clean
+source stamp and the SBOM. It then builds the frontend and reuses the existing
+Go packager for Linux amd64/arm64 and the Python SBOM generator. It requires clean
 committed source, never reads the production signing key and never publishes.
 An unsigned candidate is not a supported native installation or update asset.
 
@@ -65,10 +67,12 @@ verified with the production trust root. No private key is retained.
 
 4. Preparation checks official protected-main identity, computes the version and
    builds both packages/SBOM with pinned tools. It has read-only permissions and
-   no signing secret. Only this run's unsigned artifact passes to publication.
+   no signing secret. Only this run's plan and unsigned assets pass to publication;
+   no executable signer is transferred.
 5. Approve the exact run's protected `release` deployment. Publication has only
-   contents/attestations/OIDC write permissions. The existing signer receives
-   `RELEASE_SIGNING_KEY` in its own step, requires the pinned public identity,
+   contents/attestations/OIDC write permissions. It builds the signer from its fresh
+   exact-SHA checkout without running npm. That signer receives `RELEASE_SIGNING_KEY`
+   in its own step, requires the pinned public identity,
    and creates the signature/checksums. GitHub attests every payload.
 6. The existing publisher verifies signatures/provenance before creating a
    draft, uploads without overwriting, downloads all assets and re-verifies
@@ -83,7 +87,9 @@ verified with the production trust root. No private key is retained.
 GitHub OIDC-backed provenance for the exact SHA. Do not spoof that context or
 call its live commands as a local publishing shortcut. A failed run consumes
 its authorization: investigate the precise failure before asking for another
-run. `retry_tag` can resume only the exact matching unpublished draft, needs
+run. Inspect the actual release and tag state: a failure before draft creation
+leaves no draft, while a lost final response can leave an already published
+release. `retry_tag` can resume only the exact matching unpublished draft, needs
 separate authorization, and never permits overwriting an asset or published tag.
 Never invent provenance, rotate the trust root, delete a tag to conceal a
 failure, or publish unsigned packages to satisfy the release policy.

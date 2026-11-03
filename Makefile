@@ -26,6 +26,7 @@ security:
 # Unsigned local candidates only; production signing stays in the release environment.
 dist:
 	@test -n "$(VERSION)" || { echo 'VERSION is required (for example: make dist VERSION=0.0.0-dev.1)' >&2; exit 1; }
+	python3 -B scripts/release.py check-output --output "$(OUT)"
 	$(MAKE) frontend
 	go run ./scripts/release build -version "$(VERSION)" -commit "$$(git rev-parse HEAD)" -out "$(OUT)"
 	python3 -B scripts/release.py sbom --version "$(VERSION)" --commit "$$(git rev-parse HEAD)" --binary "$(OUT)/new-empire-control_$(VERSION)_linux_amd64.tar.gz" --binary "$(OUT)/new-empire-control_$(VERSION)_linux_arm64.tar.gz" --output "$(OUT)/sbom.cdx.json"

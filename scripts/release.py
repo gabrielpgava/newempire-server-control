@@ -23,6 +23,23 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout.strip()
 
 
+def check_output(args):
+    if os.path.lexists(args.output):
+        raise ValueError('release output must not already exist')
+    message = 'release output must be outside the checkout or Git-ignored'
+    try:
+        root = pathlib.Path(run('git', 'rev-parse', '--show-toplevel')).resolve()
+    except subprocess.CalledProcessError:
+        raise ValueError(message + ' (checkout could not be inspected)') from None
+    try:
+        relative = pathlib.Path(args.output).resolve().relative_to(root)
+    except ValueError:
+        return
+    if subprocess.run(['git', 'check-ignore', '-q', '--', str(relative)],
+                      cwd=root, capture_output=True).returncode != 0:
+        raise ValueError(message)
+
+
 def version(value):
     match = SEMVER.fullmatch(value)
     if not match:
@@ -378,6 +395,8 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('check-pr')
     commands.add_parser('guard')
+    output = commands.add_parser('check-output', help='Refuse unsafe distro destinations before building')
+    output.add_argument('--output', required=True)
     plan = commands.add_parser('plan', help='Read-only dry-run unless --live is given')
     plan.add_argument('--live', action='store_true')
     plan.add_argument('--output')
@@ -394,6 +413,8 @@ def main():
         check_pr(json.loads(pathlib.Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
     elif args.command == 'guard':
         guard(GitHub(), os.environ['GITHUB_SHA'])
+    elif args.command == 'check-output':
+        check_output(args)
     elif args.command == 'plan':
         plan_release(args)
     elif args.command == 'publish':
