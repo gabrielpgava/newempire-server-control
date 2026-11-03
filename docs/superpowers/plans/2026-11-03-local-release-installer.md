@@ -56,7 +56,9 @@
 **Interfaces:** Document `curl -fsSL https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/install.sh | bash`; retain advanced/offline instructions and initial-script trust warning. Publication consumes the exact clean protected-main source and a locally available official key.
 
 - [x] Update English documentation and local-only engineering policy; record outstanding real-host acceptance.
-- [ ] Run local `make check`, `make security`, frontend build/tests, deployment/release tests, migration/race tests, and release dry-run where sandbox/dependencies permit; record exact failures or blockers.
-- [ ] Commit and obtain a fresh read-only whole-change review; fix important findings with RED→GREEN evidence.
-- [ ] Compute the conventional version and build Linux amd64/arm64 candidates with embedded UI from clean sources; verify archive/SBOM/metadata.
-- [ ] If credentials and protected-main integration are available/authorized, sign, verify, publish locally, read back assets, and confirm stable latest/updater discovery. Otherwise preserve candidates and report exact remaining work without claiming delivery.
+- [x] Run local `make check`, `make security`, frontend build/tests, deployment/release tests, migration/race tests, and release dry-run where sandbox/dependencies permit; record exact failures or blockers.
+- [x] Commit and obtain a fresh read-only whole-change review; fix important findings with RED→GREEN evidence.
+- [x] Compute the conventional version and build Linux amd64/arm64 candidates with embedded UI from clean sources; verify archive/SBOM/metadata.
+- [x] If credentials and protected-main integration are available/authorized, sign, verify, publish locally, read back assets, and confirm stable latest/updater discovery. Otherwise preserve candidates and report exact remaining work without claiming delivery.
+
+**Conditional outcome:** preparation passed; official release delivery remains blocked by required independent/code-owner/latest-push approval on protected main. Unsigned `v0.1.0` candidates and ephemeral-key dry-run evidence are preserved. See `docs/acceptance.md`; no protection was bypassed and no official signing/publication occurred.
