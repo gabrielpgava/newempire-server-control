@@ -17,6 +17,7 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Locked offline backup, retained-data recovery and emergency owner access without a running HTTP panel; existing-state-only loading and targeted durable jobs prevent accidental bootstrap or unrelated queued execution.
 - English public-product guides, OpenAPI 3.1 schemas, upstream references, and an acceptance-evidence matrix.
 - Native installer access summary with the configured dashboard URL, informational private interface addresses, and protected first-owner code display only on an interactive terminal; redirected output never reads the code.
+- Checksum-verified one-line Linux bootstrap that stages nine hash-pinned deployment files from an immutable official source revision before invoking the existing signed-release/systemd installer; official release installation remains blocked until a signed release is published.
 
 ### Fixed
 

@@ -39,7 +39,7 @@
 - [x] Run `python3 -B -m unittest discover -s deploy -p 'test_*.py'`; confirm the new behavior tests fail before implementation.
 - [x] Implement the two reporting helpers using bounded subprocess/file operations and existing filesystem safety patterns. Display host addresses as informational only; keep the loopback binding unchanged.
 - [x] Re-run deployment tests, inspect output for accidental secret disclosure, and update installation/bootstrap-token documentation and changelog.
-- [ ] Commit the tested installer changes on `dev`; use this immutable commit as the deployment source for Task 2.
+- [x] Commit the tested installer changes on `dev`; use this immutable commit as the deployment source for Task 2.
 
 ### Task 2: Add the verified one-line bootstrap and README entry
 
@@ -47,12 +47,12 @@
 
 **Interfaces:** `stage_deployment(stage)` downloads the fixed required deployment files using a full `SOURCE_COMMIT` and expected SHA-256 map. `main()` runs the existing `install.py` with the caller's explicit `--version` and `--java` arguments only after every file verifies.
 
-- [ ] Write failing tests for the complete verified stage, tampered/truncated/oversized files, HTTP redirects/errors, private DNS results and no installer execution after any failed check.
-- [ ] Implement the bounded fixed-origin HTTPS bootstrap with private temporary staging and standard-library cleanup; preserve the installer's existing signature/key checks.
-- [ ] Pin the nine required installer/verifier/key/wrapper/unit/sudoers files to Task 1's commit and verify their hashes against that source; do not download a replacement trust root from release assets.
-- [ ] Add a single physical shell line in the README: stage the bootstrap, verify its documented SHA-256, then invoke it with an explicit stable version and approved Java path. Explain prerequisites, the localhost/private-IP distinction and interactive-only setup-code display.
-- [ ] Add a regression check matching the README bootstrap checksum to `deploy/bootstrap.py`; document when source pins must be refreshed.
-- [ ] Run the deployment/bootstrap tests and inspect that failures never execute installer code or print dummy secrets to captured output.
+- [x] Write failing tests for the complete verified stage, tampered/truncated/oversized files, HTTP redirects/errors, private DNS results and no installer execution after any failed check.
+- [x] Implement the bounded fixed-origin HTTPS bootstrap with private temporary staging and standard-library cleanup; preserve the installer's existing signature/key checks.
+- [x] Pin the nine required installer/verifier/key/wrapper/unit/sudoers files to Task 1's commit and verify their hashes against that source; do not download a replacement trust root from release assets.
+- [x] Add a single physical shell line in the README: stage the bootstrap, verify its documented SHA-256, then invoke it with an explicit stable version and approved Java path. Explain prerequisites, the localhost/private-IP distinction and interactive-only setup-code display.
+- [x] Add a regression check matching the README bootstrap checksum to `deploy/bootstrap.py`; document when source pins must be refreshed.
+- [x] Run the deployment/bootstrap tests and inspect that failures never execute installer code or print dummy secrets to captured output.
 
 ### Task 3: Verify and propose integration
 

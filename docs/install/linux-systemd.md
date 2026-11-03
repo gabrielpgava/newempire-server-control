@@ -17,6 +17,8 @@ frontend and does not require Node.js.
   Minecraft/Fabric metadata, not a guessed Java version.
 - A root administrator for initial setup. The HTTP panel always runs as the
   non-login `new-empire-control` account, never root.
+- For the one-line bootstrap: curl, `sha256sum`, `mktemp`, sudo access, and a
+  root-owned `/root` directory for private staging.
 
 Download/review the deployment asset from the official
 `gabrielpgava/newempire-server-control` release using its authenticated provenance.
@@ -35,6 +37,31 @@ dd6804fd279cc3935f9dc3669dc900d81f7e1d0a1382b67f007568a615e5bd7f
 public key. The installer pins the same key/fingerprint; a replacement key is
 rejected even if its manifest signature is internally valid. No private key
 belongs on the Minecraft host. Trust keys are never fetched beside the assets.
+
+## Verified one-line bootstrap
+
+The [README command](../../README.md#verified-one-line-installation) downloads a
+small bootstrap, verifies the documented SHA-256, then runs it as root. It does
+not execute an unauthenticated `curl | sh` response. It requires the same explicit
+stable `VERSION` and approved `JAVA_EXECUTABLE` as the installer below. **No
+official signed release is published yet; release installation remains blocked.**
+
+The bootstrap downloads exactly nine deployment files from the official
+repository at immutable commit `646bb0deab8e0128c051df7028f8cc41caa98b5b`.
+Each file must match its embedded SHA-256 before any installer code runs. Downloads
+use normal TLS certificate/hostname verification, reject non-public DNS results
+and redirects, and are bounded to 64 KiB per file and a 30-second read deadline
+with 10-second socket timeouts. No proxy or alternative origin is selected from
+environment variables. Private staging is removed on normal completion/failure.
+The existing native installer still independently verifies the release manifest,
+production key, archive hash and architecture; the bootstrap is not a release
+publisher or an unsigned-install fallback.
+
+Maintainers: after changing any pinned deployment file, commit/review that change
+first, then update `SOURCE_COMMIT` and all nine hashes in `deploy/bootstrap.py`.
+Update the README bootstrap checksum after every bootstrap change. Run the
+deployment tests and local gates before pushing; the tests check the README
+checksum and pinned file contents. Do not silently rotate the production key.
 
 ## Install an explicit stable release
 

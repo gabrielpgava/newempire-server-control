@@ -51,6 +51,36 @@ go build -o new-empire-control ./cmd/control
 
 ## Native Linux deployment
 
+### Verified one-line installation
+
+**Not available for release installation yet:** no official signed release is
+published, and this bootstrap must first be integrated into `main`. Do not use
+an unsigned local build as a replacement. Once available, select an actual
+published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
+administrator-approved absolute Java executable path before running this line:
+
+```sh
+( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; curl --disable --fail --silent --show-error --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"; printf "%s  %s\n" 0e99898b9b8744bc7a4d73cb6debc3f1648408b0983d08552816b132e4e15ed5 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
+```
+
+Requires the [Linux/systemd prerequisites](docs/install/linux-systemd.md), curl,
+`sha256sum`, `mktemp`, and root administration through sudo. No Go or Node.js is
+needed on the destination. The command verifies the bootstrap's SHA-256 **before
+execution**; that bootstrap verifies nine deployment files pinned to an immutable
+official source revision, then uses the existing pinned-key signed-release
+installer. Copy the command/checksum from reviewed official documentation.
+
+Installation enables `new-empire-control.service` and reports the configured
+dashboard URL, default **http://127.0.0.1:8080** / **http://localhost:8080**, and
+detected private interface IPs. Those IPs are informational, **not remotely
+reachable dashboard listeners**; the default remains loopback-only. Use an SSH
+tunnel or a configured HTTPS reverse proxy for remote access. On an interactive
+terminal it also shows the protected **first-owner setup code** for creating your
+first login. Redirected output never reads or prints that code; it gives a local
+read command instead. No Minecraft instance is started.
+
+### Layout and exposure
+
 Use the deployment files under `deploy/`; inspect the installation guide and installer before invoking them. The native layout uses `/etc/new-empire-control/config.json` for configuration, `/var/lib/new-empire-control` for panel state, `/opt/new-empire-control` for the application, and `/usr/local/libexec/new-empire-runtime` for the restricted helper. Confirm the final installed paths in your configuration and service units.
 
 - Run the web process as the dedicated unprivileged panel account. `serve` refuses to run as root.
