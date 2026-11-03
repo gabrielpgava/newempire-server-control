@@ -1,0 +1,137 @@
+{
+  "browser": "Chrome via Playwright 1.64.1",
+  "axe": "4.14.0",
+  "scope": "Actual embedded Go UI/API; disposable empty panel on macOS; no runtime or HTTP mocks",
+  "captures": [
+    {
+      "name": "desktop-setup",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "desktop-account",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "desktop-panel-settings",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "desktop-users",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "desktop-password-confirmation",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "desktop-updates",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "documentWidth": 1280,
+      "clientWidth": 1280,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "mobile-wizard",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentWidth": 390,
+      "clientWidth": 390,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "mobile-navigation",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentWidth": 390,
+      "clientWidth": 390,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "mobile-account",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentWidth": 390,
+      "clientWidth": 390,
+      "mainFont": "14px",
+      "violations": []
+    },
+    {
+      "name": "mobile-panel-settings",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentWidth": 390,
+      "clientWidth": 390,
+      "mainFont": "14px",
+      "violations": []
+    }
+  ],
+  "assertions": [
+    "Protected browser bootstrap reached the authenticated wizard",
+    "Real user creation, cancellable typed-confirmation dialog, and revocation",
+    "Password change performed a real browser reload/sign-out; old password and session rejected",
+    "Real TOTP enrollment, code-required login, protected disable, and reload sign-out",
+    "390px touch-emulated navigation contains keyboard focus, makes the background inert, and restores focus on Escape",
+    "No uncaught page errors; zero WCAG A/AA axe violations and no horizontal viewport overflow in captured views"
+  ],
+  "source_commit": "f3b2161",
+  "browserVersion": "156.0.8078.74",
+  "published_captures": [
+    {
+      "file": "desktop-account.png",
+      "sha256": "c015b91b0a37778a6ee2b23f0bb98063171b56f60a895c81366dae84091b478f"
+    },
+    {
+      "file": "mobile-account.png",
+      "sha256": "964f5cd5d5f5fa718e195483e82ecc28008793bc1ad4b496a74289caeff8c8e4"
+    }
+  ]
+}

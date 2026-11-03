@@ -1,0 +1,46 @@
+{
+  "date": "2026-11-02",
+  "source_commit": "ad8be19cd9d03d03d862dea9b3d776764020a48b",
+  "version": "0.0.0-dev.2",
+  "official_release": false,
+  "instance_id": "a5d270d4a97d992eda20627b9dd89508",
+  "minecraft_version": "26.3",
+  "loader_version": "0.20.1",
+  "java_version": "25.0.5",
+  "archive_bytes": 66403718,
+  "archive_sha256": "81a47628851b435100aff447ee600fc80937aedd926737e5e1d7dad8af2cf833",
+  "runtime_cache": "Verified official launcher/server/libraries plus a locally derived manifest-only cache JAR; not an official signed cache",
+  "passed": {
+    "bootstrap_and_authenticated_api": true,
+    "allowlisted_java_inspection": true,
+    "tus_head_offset_resume": true,
+    "wrong_upload_offset_rejected": true,
+    "fresh_authoritative_source_preview": true,
+    "explicit_eula_required": true,
+    "native_import_job": "c81b58d3b790873936d557e92159fe9d"
+  },
+  "minecraft_start": {
+    "job_id": "2caeae8e6904c4a681a526a5d11704a2",
+    "job_state": "failed",
+    "error": "Minecraft exited before readiness; inspect the console and restore point",
+    "executed": true,
+    "ready": false,
+    "observed_status": "crashed",
+    "exit_status": 1,
+    "cpu_seconds": 10.3396,
+    "reported_memory_peak": "593M (systemd journal)",
+    "diagnosis": "Server watchdog fired while the main thread waited on Authlib service/public-key discovery; the Minecraft Services Discovery thread was blocked in DNS lookup",
+    "discovery_url": "https://discovery.minecraftservices.com/minecraft/client",
+    "discovered_public_keys_url": "https://api.minecraftservices.com/publickeys",
+    "authentication_or_watchdog_disabled": false,
+    "stopped_by_fixture_cleanup": true
+  },
+  "not_reached": [
+    "authenticated RCON readiness and console",
+    "real IPv4/IPv6 ingress-drop trace",
+    "online/offline backup and confirmed world restore",
+    "successful Minecraft or panel-only restart",
+    "official panel release/update/rollback acceptance"
+  ],
+  "temporary_metadata_channel_cleanup": "completed: owned routes, NAT, relay/tunnel removed; original guest hosts/SSH/network state restored; protective table unchanged"
+}

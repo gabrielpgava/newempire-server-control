@@ -1,0 +1,32 @@
+name: Bug report
+description: Report reproducible incorrect behavior without secrets or private world data.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities, use private security reporting. Never attach master keys, RCON passwords, cookies, real backups, or player IP addresses."
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of new-empire-control version.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, architecture, systemd/LXC deployment, filesystem and Java versions.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a disposable synthetic instance. Include expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Relevant job ID, error, and bounded logs with credentials and player data removed.

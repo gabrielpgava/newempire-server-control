@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose a complete workflow with safety and recovery requirements.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Administrator problem
+      description: Explain the task and why the existing workflow is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: Include permissions, confirmation, backup/recovery, and failure behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      description: Describe how to verify a real working implementation without risking an existing world.

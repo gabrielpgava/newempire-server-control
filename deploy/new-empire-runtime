@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/new-empire-control/control runtime-helper "$@"

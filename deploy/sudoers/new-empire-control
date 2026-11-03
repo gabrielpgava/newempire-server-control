@@ -1,0 +1,3 @@
+# Requires sudo 1.9.10+ argument regular expressions; JSON policies are enforced by the helper.
+Defaults:new-empire-control env_reset, !setenv, !requiretty
+new-empire-control ALL=(root) NOPASSWD: NOSETENV: /usr/local/libexec/new-empire-runtime ^(start|stop|restart|status|prepare|reconfigure) [0-9a-f]{32}$, /usr/local/libexec/new-empire-runtime ^logs [0-9a-f]{32}( ([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|1000))?$, /usr/local/libexec/new-empire-runtime panel-update, /usr/local/libexec/new-empire-runtime provision

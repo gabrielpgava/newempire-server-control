@@ -1,0 +1,21 @@
+# Packaged-binary verification
+
+On **2026-11-02**, `make release-dry-run` passed against clean source `78ee097bda4e3f00032b254f2591fbb2656f5884` with Go 1.27.3 and Node 26.13.0. Assets remain local under `dist/dry-run`, version `0.0.0-dev.1`. The ephemeral signing key was generated only in memory; these are not official releases and have no GitHub provenance. The separate read-only SemVer plan proposes `v0.1.0`, not publication.
+
+The local assert-based harness ran `python3 run.py 78ee097bda4e3f00032b254f2591fbb2656f5884` from a disposable smoke directory. It checked archive hashes against the manifest, extracted only the single regular executable, bound source identity to the SBOM, and ran both binaries in read-only, network-disabled Docker containers with all capabilities dropped. amd64 used emulation on arm64 macOS, not physical amd64 hardware. [Sanitized results and archive hashes](native-evidence.json) contain no fixture credentials or state.
+
+For each architecture, `control version --json` matched commit/version/schema/repository; HTTP index/JS/CSS bytes matched the built distribution; bootstrap and local authenticated health worked; database/key/token files were private and owned by UID 65534; concurrent `doctor` refused the held panel lock; and SIGTERM shut down successfully. A separate root process was refused before serving HTTP. The panel PATH contained no Node/runtime tools; Node was only the external test client. All test containers were removed.
+
+This is packaging/startup evidence, not a native installer, systemd, nftables, Java/Minecraft, provider-delivery or live updater-rollback drill. The final ledger commit is documentation-only; these artifacts deliberately retain the exact tested source identity above. See [acceptance](../../acceptance.md) for external release gates.
+
+## Actual-schema fix: refreshed packages
+
+After integrating the updater schema and policy fixes, complete host/security and isolated Linux gates passed at clean source **`ad8be19cd9d03d03d862dea9b3d776764020a48b`**. On the same date/toolchain, the equivalent dry-run command used a new directory to retain the historical assets:
+
+```sh
+go run ./scripts/release dry-run -version 0.0.0-dev.2 \
+  -commit ad8be19cd9d03d03d862dea9b3d776764020a48b \
+  -out dist/dry-run-schema-ad8be19
+```
+
+It passed both cross-builds, packaging, SBOM generation and ephemeral-key signing/verification. The same assert-based packaged-binary harness was rerun against these new artifacts and their exact source-bound SBOM. **Both architectures passed every check above**, including embedded asset hashes, authenticated health, ownership, concurrent lock refusal, root refusal and graceful shutdown. [New sanitized results and archive hashes](schema-native-evidence.json) preserve their separate identity. amd64 still used emulation, and neither these packages nor the development VM fixture are a signed official release or production updater acceptance.
