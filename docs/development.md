@@ -17,6 +17,8 @@ make security        # Go vulnerability analysis + production npm audit
 make frontend        # npm ci, typecheck, non-watch tests, build
 make test            # frontend build and all Go/release tests
 make build           # frontend + bin/new-empire-control
+make dist VERSION=0.0.0-dev.1 OUT=dist/local-evaluation # unsigned Linux packages + SBOM
+make release-plan    # read-only conventional version/notes preview
 make release-test    # Python automation tests and Go package/signature tests
 make release-dry-run # complete local package exercise with an in-memory test key
 ```
@@ -32,9 +34,14 @@ ambiguous OpenAPI file. Keep exactly one of `docs/api/openapi.json`,
 reference validation. Go tests include versioned migrations and the security
 regressions present in each domain. Lockfiles must not drift during checks.
 
-GitHub Actions workflows are disabled by the owner's budget policy. Run these
-commands locally and attach results to the PR; they are not run automatically on
-GitHub. Do not add workflows or paid CI/release services without owner approval.
+Automatic CI/publication is disabled by the owner's budget policy. Run these
+commands locally and attach results to the PR. The sole approved workflow is
+manual release publication; each run needs explicit owner authorization and
+Actions must be disabled afterward, even on failure. No automatic validation
+workflow or trigger is restored. `make dist` requires a version, clean committed
+source and a new output directory outside the checkout or Git-ignored (such as
+`dist/local-evaluation`). Existing outputs, including dangling symlinks, are
+rejected before frontend work; it never signs or publishes its candidates.
 
 The normal commands run application tests on your machine. For isolation use
 the repository's separately maintained `scripts/test-sandbox.sh` via
@@ -49,8 +56,8 @@ Feature/breaking PRs require `release:feature`; a label cannot turn a `chore:` t
 into a releasing change. Include real test evidence, English documentation,
 failure handling, compatibility, recovery and migration effects. Release code
 and the trust root require owner review. Do not bypass checks to make a release
-look complete. [Releases](releases.md) describes the retained local tooling and
-the current publication blocker.
+look complete. [Releases](releases.md) describes the local tooling, protected
+manual publication and failure/retry boundaries.
 
 Linux/systemd integration is a separate acceptance activity; a macOS build or
 mocked service test cannot prove it. Docker is not silently substituted for an

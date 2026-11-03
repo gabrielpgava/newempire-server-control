@@ -1,4 +1,6 @@
-.PHONY: check test frontend build security release-test release-dry-run test-sandbox
+.PHONY: check test frontend build security dist release-plan release-test release-dry-run test-sandbox
+
+OUT ?= dist/release-$(VERSION)
 
 check:
 	bash scripts/check.sh
@@ -20,6 +22,17 @@ build: frontend
 security:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 	npm --prefix web audit --omit=dev --audit-level=low
+
+# Unsigned local candidates only; production signing stays in the release environment.
+dist:
+	@test -n "$(VERSION)" || { echo 'VERSION is required (for example: make dist VERSION=0.0.0-dev.1)' >&2; exit 1; }
+	python3 -B scripts/release.py check-output --output "$(OUT)"
+	$(MAKE) frontend
+	go run ./scripts/release build -version "$(VERSION)" -commit "$$(git rev-parse HEAD)" -out "$(OUT)"
+	python3 -B scripts/release.py sbom --version "$(VERSION)" --commit "$$(git rev-parse HEAD)" --binary "$(OUT)/new-empire-control_$(VERSION)_linux_amd64.tar.gz" --binary "$(OUT)/new-empire-control_$(VERSION)_linux_arm64.tar.gz" --output "$(OUT)/sbom.cdx.json"
+
+release-plan:
+	python3 -B scripts/release.py plan
 
 release-test:
 	python3 -B -m unittest discover -s scripts -p '*_test.py'

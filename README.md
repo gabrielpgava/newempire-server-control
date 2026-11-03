@@ -2,7 +2,7 @@
 
 A browser-based control panel for headless Minecraft Java/Fabric servers. Go serves a versioned API and an embedded React interface; SQLite keeps configuration, audit history, schedules, and durable jobs. Linux with systemd is the primary runtime.
 
-**Status: unreleased.** No published version or installable GitHub Release is confirmed. The implementation is being integrated and must pass the [acceptance checks](docs/acceptance.md) before use with valuable worlds. A public repository is not evidence of a tested deployment.
+**Status: evaluation-stage software.** Install only an authenticatable build listed in the [official GitHub Releases](https://github.com/gabrielpgava/newempire-server-control/releases). Release availability is separate from the [acceptance checks](docs/acceptance.md) required before use with valuable worlds; a public repository or published asset is not evidence of a tested deployment.
 
 ## What is in the project
 
@@ -50,6 +50,37 @@ go build -o new-empire-control ./cmd/control
 `doctor` reports configuration, database integrity when initialized, and whether the helper exists. For initialized state it requires the panel to be stopped and takes `panel.lock`; it never initializes an empty database or runs migrations. Helper existence is not proof that systemd permissions, firewall isolation, or Minecraft readiness work.
 
 ## Native Linux deployment
+
+### Verified one-line installation
+
+**Requires an actual published signed release:** if the official Releases page
+has none, this command cannot install the application. Do not substitute an
+unsigned local build. Select a published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
+administrator-approved absolute Java executable path before running this line:
+
+```sh
+( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; ip=$(timeout 10 /usr/bin/python3 -I -c "import ipaddress,socket,sys; a=socket.getaddrinfo(\"raw.githubusercontent.com\",443,type=socket.SOCK_STREAM); a and all(ipaddress.ip_address(x[4][0]).is_global for x in a) or sys.exit(\"Non-public bootstrap destination\"); p=ipaddress.ip_address(a[0][4][0]); print(\"[\"+str(p)+\"]\" if p.version==6 else str(p))"); status=$(curl --disable --fail --silent --show-error --proto "=https" --tlsv1.2 --noproxy "*" --resolve "raw.githubusercontent.com:443:$ip" --connect-timeout 10 --max-time 30 --max-filesize 65536 --write-out "%{http_code}" https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"); [ "$status" = 200 ]; printf "%s  %s\n" 423d95deb5bde6041a127a8ef441cac61639ef5aae64b607e1f290c869e91c91 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
+```
+
+Requires the [Linux/systemd prerequisites](docs/install/linux-systemd.md), curl,
+`sha256sum`, `mktemp`, coreutils `timeout`, and root administration through sudo.
+No Go or Node.js is needed on the destination. The command verifies the bootstrap's SHA-256 **before
+execution**; that bootstrap verifies nine deployment files pinned to an immutable
+official source revision, then uses the existing pinned-key signed-release
+installer. The initial curl pins a validated public address, bypasses environment
+proxies and requires HTTP 200; redirects are rejected. Copy the command/checksum
+from reviewed official documentation.
+
+Installation enables `new-empire-control.service` and reports the configured
+dashboard URL, default **http://127.0.0.1:8080** / **http://localhost:8080**, and
+detected private interface IPs. Those IPs are informational, **not remotely
+reachable dashboard listeners**; the default remains loopback-only. Use an SSH
+tunnel or a configured HTTPS reverse proxy for remote access. On an interactive
+terminal it also shows the protected **first-owner setup code** for creating your
+first login. Redirected output never reads or prints that code; it gives a local
+read command instead. No Minecraft instance is started.
+
+### Layout and exposure
 
 Use the deployment files under `deploy/`; inspect the installation guide and installer before invoking them. The native layout uses `/etc/new-empire-control/config.json` for configuration, `/var/lib/new-empire-control` for panel state, `/opt/new-empire-control` for the application, and `/usr/local/libexec/new-empire-runtime` for the restricted helper. Confirm the final installed paths in your configuration and service units.
 
@@ -122,7 +153,9 @@ Actual implemented UI: [desktop](docs/evidence/ui/desktop-account.png) · [mobil
 
 Read [AGENTS.md](AGENTS.md) before contributing. Keep code, tests, English documentation, migrations, and OpenAPI synchronized. Use Conventional Commits. A significant feature requires a versioned release after trusted-branch checks pass; do not publish incomplete or untested code just to create a tag.
 
-GitHub Actions workflows have been removed at the owner's request to avoid runner costs. Run `make check` and `make security` locally. Automatic releases are disabled, and official publication is blocked pending an approved trusted publication process; see [releases](docs/releases.md). Remote branch rules and existing workflow runs are not changed by removing these files.
+Run `make check` and `make security` locally. `make build` creates the host binary; `make dist VERSION=0.0.0-dev.1 OUT=dist/local-evaluation` creates unsigned Linux amd64/arm64 packages with embedded UI and an SBOM from clean committed source. These are evaluation candidates, not official installation/update assets. `make release-plan` previews the next version without publishing.
+
+Automatic CI and releases remain disabled. The [manual release workflow](docs/releases.md) requires explicit owner authorization for each run, protected-main source, environment approval, signing and provenance; GitHub Actions must be disabled again when it finishes, including on failure.
 
 The required release output includes Linux amd64/arm64 binaries with the embedded UI, machine-readable metadata, checksums, and authenticated signatures/provenance. Signing configuration, publication, self-update discovery, and a real-host rollback drill are release gates, not assumed successes. Until a release is actually published, use source builds for evaluation only.
 

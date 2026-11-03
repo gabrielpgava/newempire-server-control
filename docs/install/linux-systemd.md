@@ -17,6 +17,8 @@ frontend and does not require Node.js.
   Minecraft/Fabric metadata, not a guessed Java version.
 - A root administrator for initial setup. The HTTP panel always runs as the
   non-login `new-empire-control` account, never root.
+- For the one-line bootstrap: curl, `sha256sum`, `mktemp`, `timeout`, sudo access, and a
+  root-owned `/root` directory for private staging.
 
 Download/review the deployment asset from the official
 `gabrielpgava/newempire-server-control` release using its authenticated provenance.
@@ -35,6 +37,38 @@ dd6804fd279cc3935f9dc3669dc900d81f7e1d0a1382b67f007568a615e5bd7f
 public key. The installer pins the same key/fingerprint; a replacement key is
 rejected even if its manifest signature is internally valid. No private key
 belongs on the Minecraft host. Trust keys are never fetched beside the assets.
+
+## Verified one-line bootstrap
+
+The [README command](../../README.md#verified-one-line-installation) downloads a
+small bootstrap, verifies the documented SHA-256, then runs it as root. It does
+not execute an unauthenticated `curl | sh` response. It requires the same explicit
+stable `VERSION` and approved `JAVA_EXECUTABLE` as the installer below. **No
+official signed release is published yet; release installation remains blocked.**
+
+The initial command bounds DNS lookup to ten seconds, refuses empty or non-public
+results, pins a validated address for curl, disables proxy selection, and requires
+HTTP 200 within thirty seconds before checking the bootstrap checksum. A redirect
+response is refused even if its body happens to match the expected checksum.
+
+The bootstrap downloads exactly nine deployment files from the official
+repository at immutable commit `0bc59f9cb537982048c4d1cbef355ccf982d072c`.
+Each file must match its embedded SHA-256 before any installer code runs. Downloads
+use normal TLS certificate/hostname verification, reject non-public DNS results
+and redirects, and are bounded to 64 KiB per file. A separate worker bounds the
+complete transfer, including DNS, TLS, headers and chunk framing, to thirty seconds
+plus at most two seconds of worker cleanup; socket timeouts are ten seconds.
+No proxy or alternative origin is selected from environment variables. Private
+staging is removed on normal completion/failure.
+The existing native installer still independently verifies the release manifest,
+production key, archive hash and architecture; the bootstrap is not a release
+publisher or an unsigned-install fallback.
+
+Maintainers: after changing any pinned deployment file, commit/review that change
+first, then update `SOURCE_COMMIT` and all nine hashes in `deploy/bootstrap.py`.
+Update the README bootstrap checksum after every bootstrap change. Run the
+deployment tests and local gates before pushing; the tests check the README
+checksum and pinned file contents. Do not silently rotate the production key.
 
 ## Install an explicit stable release
 
@@ -94,6 +128,37 @@ Initial HTTP binding is `127.0.0.1:8080`. Read the bootstrap token only from the
 protected panel state directory. Use an SSH tunnel for initial setup or configure
 an HTTPS reverse proxy and matching `public_url`/secure cookies before remote
 access. Do not expose the loopback development origin or RCON publicly.
+
+After enabling `new-empire-control.service`, the installer prints the configured
+dashboard URL, the default localhost address, and detected RFC1918/IPv6 ULA
+interface addresses. Those interface addresses are **not dashboard listeners**:
+the installer does not change the loopback binding, existing custom `public_url`,
+or firewall policy. Missing address discovery is non-fatal.
+
+On an interactive terminal it waits up to ten seconds for the existing protected
+`setup-token` and shows the **first-owner setup code**. Enter that code in the
+dashboard to create your first login; there is no default username/password.
+Keep the code private and do not record/share that terminal. The file must be an
+ordinary single-link, panel-owned mode-0600 file with the expected token format;
+links, devices, unsafe permissions and malformed/oversized contents are refused.
+
+Redirected/non-interactive output never opens or prints the code. Instead it
+shows a local administrator read command, normally:
+
+```sh
+sudo cat -- /var/lib/new-empire-control/setup-token
+```
+
+An unavailable code can mean startup is pending or first-owner setup is complete;
+it is not proof of either. Inspect service status and protected file permissions
+locally if necessary. Installation never regenerates the token or retrieves it
+over HTTP. Existing custom data-directory settings are resolved relative to the
+service's working directory, `/var/lib/new-empire-control`, not the administrator's
+shell. An omitted/null `data_dir` uses its `data` child, matching the application;
+an empty value uses the working directory itself. Absolute paths are preserved.
+Nested panel-owned directories are supported for reporting, but every component
+must be a real directory, owned by root or the panel and not group/world writable.
+The stricter root-only ancestor rules for installation files remain unchanged.
 
 Existing panel-owned `updates/` directories are refused. Do not recursively chown
 them into trust: preserve and inspect legacy state offline, then provision a

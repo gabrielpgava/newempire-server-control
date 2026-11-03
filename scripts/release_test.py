@@ -4,6 +4,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -102,6 +103,160 @@ class Policy(unittest.TestCase):
                 release.guard(github, sha)
             with mock.patch.dict(os.environ, {'GITHUB_REPOSITORY': 'attacker/fork'}), self.assertRaises(ValueError):
                 release.guard(github, sha)
+
+
+class LocalDistribution(unittest.TestCase):
+    def make(self, *args):
+        return subprocess.run(['make', '--no-print-directory', *args],
+                              cwd=pathlib.Path(__file__).resolve().parent.parent,
+                              capture_output=True, text=True, timeout=10)
+
+    def test_missing_version_refuses_before_any_build(self):
+        result = self.make('dist', 'VERSION=')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('VERSION is required', result.stderr)
+        self.assertNotIn('npm --prefix', result.stdout)
+        self.assertNotIn('go run', result.stdout)
+
+    def refusal(self, output, message):
+        with tempfile.TemporaryDirectory() as temporary:
+            override = pathlib.Path(temporary) / 'frontend.mk'
+            override.write_text('frontend:\n\t@echo FRONTEND_STARTED; exit 97\n')
+            result = self.make('-f', 'Makefile', '-f', str(override), 'dist',
+                               f'MAKE=make -f Makefile -f "{override}"',
+                               'VERSION=1.2.3', f'OUT={output}')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(message, result.stderr)
+        self.assertNotIn('FRONTEND_STARTED', result.stdout)
+        self.assertNotIn('go run', result.stdout)
+
+    def test_existing_output_and_dangling_symlink_refuse_before_any_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            directory = root / 'directory'
+            directory.mkdir()
+            sentinel = directory / 'retained'
+            sentinel.write_bytes(b'keep existing output')
+            regular = root / 'file'
+            regular.write_bytes(b'keep existing file')
+            dangling = root / 'dangling'
+            dangling.symlink_to(root / 'missing')
+            for output in (directory, regular, dangling):
+                with self.subTest(output=output.name):
+                    self.refusal(str(output), 'release output must not already exist')
+            self.assertEqual(sentinel.read_bytes(), b'keep existing output')
+            self.assertEqual(regular.read_bytes(), b'keep existing file')
+            self.assertTrue(dangling.is_symlink())
+
+    def test_unignored_checkout_output_refuses_before_any_build(self):
+        self.refusal('candidate-output', 'release output must be outside the checkout or Git-ignored')
+
+    def test_output_preflight_accepts_only_ignored_or_external_new_directories(self):
+        self.assertTrue(hasattr(release, 'check_output'), 'The output preflight is missing')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary) / 'checkout'
+            root.mkdir()
+            subprocess.run(['git', 'init', '-q', str(root)], check=True, capture_output=True)
+            (root / '.gitignore').write_text('/dist/\n')
+            old = pathlib.Path.cwd()
+            try:
+                os.chdir(root)
+                for output in ('candidate-output', str(root / 'candidate-output'), '.git/output'):
+                    with self.subTest(rejected=output), self.assertRaisesRegex(ValueError, 'Git-ignored'):
+                        release.check_output(argparse.Namespace(output=output))
+                for output in ('dist/new-output', str(root / 'dist/new-output'), str(root.parent / 'external')):
+                    with self.subTest(accepted=output):
+                        release.check_output(argparse.Namespace(output=output))
+                        self.assertFalse(os.path.lexists(output))
+            finally:
+                os.chdir(old)
+
+    def test_distribution_builds_frontend_both_architectures_and_sbom_without_signing(self):
+        result = self.make('-n', 'dist', 'VERSION=1.2.3', 'OUT=dist/test-release')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = result.stdout
+        self.assertLess(commands.index('npm --prefix web run build'), commands.index('go run ./scripts/release build'))
+        self.assertIn('-version "1.2.3"', commands)
+        self.assertIn('-out "dist/test-release"', commands)
+        self.assertIn('scripts/release.py sbom --version "1.2.3"', commands)
+        for architecture in ('amd64', 'arm64'):
+            self.assertIn(f'dist/test-release/new-empire-control_1.2.3_linux_{architecture}.tar.gz', commands)
+        self.assertIn('--output "dist/test-release/sbom.cdx.json"', commands)
+        self.assertNotIn(' sign ', commands)
+        self.assertNotIn(' publish ', commands)
+
+    def test_release_plan_is_read_only(self):
+        result = self.make('-n', 'release-plan')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'python3 -B scripts/release.py plan')
+
+
+class ManualWorkflow(unittest.TestCase):
+    def workflow(self):
+        path = pathlib.Path(__file__).resolve().parent.parent / '.github/workflows/release.yml'
+        self.assertTrue(path.is_file(), 'The manual-only release workflow is missing')
+        return path.read_text()
+
+    def test_manual_only_protected_main_and_immutable_actions(self):
+        workflow = self.workflow()
+        triggers = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
+        self.assertEqual(re.findall(r'^  ([a-z_]+):', triggers, re.MULTILINE), ['workflow_dispatch'])
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
+        self.assertIn("github.repository == 'gabrielpgava/newempire-server-control'", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn('github.ref_protected', workflow)
+        self.assertIn('cancel-in-progress: false', workflow)
+        self.assertNotIn('ci.yml', workflow)
+        for action in re.findall(r'^\s+- uses: (\S+)', workflow, re.MULTILINE):
+            self.assertRegex(action, r'^actions/[a-z-]+@[0-9a-f]{40}$')
+        self.assertEqual(workflow.count('ref: ${{ github.sha }}'), 2)
+        self.assertEqual(workflow.count('persist-credentials: false'), 2)
+
+    def test_read_only_preparation_and_environment_scoped_signing(self):
+        workflow = self.workflow()
+        prepare, publish = workflow.split('\n  publish:\n', 1)
+        self.assertNotIn('secrets.', prepare)
+        self.assertNotIn(': write', prepare)
+        self.assertIn('environment: release', publish)
+        for permission in ('contents', 'id-token', 'attestations'):
+            self.assertIn(f'{permission}: write', publish)
+        self.assertEqual(workflow.count('${{ secrets.RELEASE_SIGNING_KEY }}'), 1)
+        self.assertLess(publish.index('scripts/release.py guard'), publish.index('secrets.RELEASE_SIGNING_KEY'))
+        self.assertIn('make dist VERSION="$RELEASE_VERSION"', prepare)
+        self.assertIn('scripts/release.py publish --plan', publish)
+        self.assertIn('subject-path: ${{ runner.temp }}/release-bundle/assets/*', publish)
+        self.assertIn('name: ${{ needs.prepare.outputs.artifact_name }}', publish)
+
+    def test_secret_bearing_signer_is_built_in_publication_and_never_transferred(self):
+        prepare, publish = self.workflow().split('\n  publish:\n', 1)
+        self.assertNotIn('/release-tool', prepare)
+        self.assertIn('path: |\n            ${{ runner.temp }}/release-bundle/plan.json\n            ${{ runner.temp }}/release-bundle/assets/', prepare)
+        build = 'go build -mod=readonly -o "$RUNNER_TEMP/release-tool" ./scripts/release'
+        self.assertIn(build, publish)
+        self.assertLess(publish.index(build), publish.index('secrets.RELEASE_SIGNING_KEY'))
+        self.assertIn('uses: actions/setup-go@', publish)
+        self.assertNotIn('npm ', publish)
+        self.assertNotIn('release-bundle/release-tool', publish)
+        self.assertIn('"$RUNNER_TEMP/release-tool" sign -dir', publish)
+        self.assertIn('--tool "$RUNNER_TEMP/release-tool"', publish)
+
+
+class ReleaseNotes(unittest.TestCase):
+    def test_planned_notes_do_not_certify_unrun_host_acceptance(self):
+        sha = 'a' * 40
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / 'plan.json'
+            with mock.patch.object(release, 'run', side_effect=[sha, '', 'feat: first release', '- abcdef0 feat: first release']), \
+                    mock.patch.dict(os.environ, {'RELEASE_BUMP': 'auto', 'RELEASE_CHANNEL': 'stable', 'RELEASE_RETRY_TAG': ''}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                release.plan_release(argparse.Namespace(live=False, output=str(output)))
+            body = json.loads(output.read_text())['body']
+        self.assertIn('## Verification limits', body)
+        self.assertIn('do not certify production readiness', body)
+        self.assertIn('Minecraft sustained readiness', body)
+        self.assertIn('installation/update/rollback', body)
+        self.assertIn(f'/blob/{sha}/docs/acceptance.md', body)
+        self.assertTrue(body.endswith(release.marker(sha)))
 
 
 class FakeGitHub:

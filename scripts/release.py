@@ -23,6 +23,23 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout.strip()
 
 
+def check_output(args):
+    if os.path.lexists(args.output):
+        raise ValueError('release output must not already exist')
+    message = 'release output must be outside the checkout or Git-ignored'
+    try:
+        root = pathlib.Path(run('git', 'rev-parse', '--show-toplevel')).resolve()
+    except subprocess.CalledProcessError:
+        raise ValueError(message + ' (checkout could not be inspected)') from None
+    try:
+        relative = pathlib.Path(args.output).resolve().relative_to(root)
+    except ValueError:
+        return
+    if subprocess.run(['git', 'check-ignore', '-q', '--', str(relative)],
+                      cwd=root, capture_output=True).returncode != 0:
+        raise ValueError(message)
+
+
 def version(value):
     match = SEMVER.fullmatch(value)
     if not match:
@@ -180,7 +197,16 @@ def plan_release(args):
             'tag': f'v{result}' if result else '', 'prerelease': channel != 'stable',
             'base': base, 'retry': bool(retry)}
     notes = run('git', 'log', '--format=- %h %s%n%b', revision)
-    plan['body'] = f'## Changes\n\n{notes or "Manual maintenance release."}\n\n{marker(sha)}'
+    plan['body'] = (
+        f'## Changes\n\n{notes or "Manual maintenance release."}\n\n'
+        '## Verification limits\n\n'
+        'Verified assets and local tests do not certify production readiness. '
+        'Evaluate with disposable data before using valuable worlds. '
+        'Minecraft sustained readiness, complete restart/online-backup/restore/firewall '
+        'drills and official signed installation/update/rollback acceptance remain unverified. '
+        'Publication alone does not prove that an update leaves a running Minecraft instance unchanged.\n\n'
+        f'Consult the [source-bound acceptance ledger](https://github.com/{REPOSITORY}/blob/{sha}/docs/acceptance.md) '
+        f'for recorded evidence and remaining gaps.\n\n{marker(sha)}')
     if args.live and result:
         existing = [row for row in github.releases() if row['tag_name'] == plan['tag']]
         if len(existing) > 1:
@@ -369,6 +395,8 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('check-pr')
     commands.add_parser('guard')
+    output = commands.add_parser('check-output', help='Refuse unsafe distro destinations before building')
+    output.add_argument('--output', required=True)
     plan = commands.add_parser('plan', help='Read-only dry-run unless --live is given')
     plan.add_argument('--live', action='store_true')
     plan.add_argument('--output')
@@ -385,6 +413,8 @@ def main():
         check_pr(json.loads(pathlib.Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
     elif args.command == 'guard':
         guard(GitHub(), os.environ['GITHUB_SHA'])
+    elif args.command == 'check-output':
+        check_output(args)
     elif args.command == 'plan':
         plan_release(args)
     elif args.command == 'publish':

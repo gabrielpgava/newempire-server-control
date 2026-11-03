@@ -4,7 +4,7 @@ This is an evidence ledger, not a completion badge. **No production-readiness, s
 
 ## Current automation policy
 
-GitHub Actions CI/release workflows have been removed at the owner's request to avoid runner costs. Validation/security checks must run locally and be reviewed before merge. Official publication is blocked because the retained publisher requires the removed workflow context and GitHub provenance; no replacement pipeline or weakened verification is introduced. Historical CI results below remain evidence only for their recorded revisions. Removing source files does not cancel existing remote runs or change branch rules; required-check settings may still block merges and need separate maintainer review.
+Automatic CI/publication remains disabled to avoid runner costs. Validation/security checks must run locally and be reviewed before merge. The owner authorized a normally-disabled, manual-only release workflow and one publication attempt; it preserves signing, GitHub provenance and verified draft read-back. This authorization is not evidence of successful publication. Any approved temporary merge/environment exception must be restored immediately, and Actions disabled when the run finishes or fails. Historical CI results below remain scoped to their recorded revisions; remote policy changes require separate evidence.
 
 ### Workflow removal verification — 2026-11-02
 
@@ -97,7 +97,7 @@ Actual-schema enforcement from `59c429b` is now integrated at `16f6572`: online 
 
 ## Remaining release gates
 
-- Run and review local checks on the final source. Resolve stale required GitHub check settings separately; Actions must not be restored without owner approval. Establish an approved trusted publication path before any official release; local gates and package smokes do not prove publication.
+- Run and review local checks on the final source. Use only the explicitly authorized manual release run, preserving source/signature/provenance verification and restoring any narrowly approved policy exceptions. Local gates and package smokes do not prove publication; record the actual run, release and final disabled-Actions state.
 - Complete all applicable disposable-host drills above on Linux/systemd; separately test Proxmox LXC before claiming that deployment is verified.
 - Confirm the installer and recovery guides against actual files and commands. A Compose panel is not a tested Minecraft Docker adapter.
 - Provide real external-provider and per-instance browser evidence; the committed screenshots cover the implemented empty-panel/account UI only.

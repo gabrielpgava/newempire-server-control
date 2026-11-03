@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import gzip
 import hashlib
 import importlib.util
@@ -12,6 +13,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -55,6 +57,207 @@ def manifest(data):
         {"name": f"new-empire-control_1.2.0_linux_{arch}.tar.gz", "os": "linux", "arch": arch, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         for arch in ("amd64", "arm64")
     ]}
+
+
+class InstallationAccessTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        self.etc = self.root / "etc"
+        self.data = self.root / "data"
+        self.etc.mkdir()
+        self.data.mkdir(mode=0o700)
+        self.config = self.etc / "config.json"
+        self.config.write_text(json.dumps({"public_url": "https://panel.example.test", "data_dir": str(self.data)}))
+        self.token = self.data / "setup-token"
+        self.code = "D" * 43
+
+    def report(self, interactive=True):
+        self.assertTrue(callable(getattr(installer, "print_installation_access", None)), "post-install access reporting is missing")
+        output = io.StringIO()
+        output.isatty = lambda: interactive
+
+        @contextlib.contextmanager
+        def directory(path, **kwargs):
+            fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                yield fd
+            finally:
+                os.close(fd)
+
+        account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        with mock.patch.object(installer, "ETC", str(self.etc)), mock.patch.object(installer, "DATA", str(self.data)), mock.patch.object(installer, "directory", directory), mock.patch.object(installer.pwd, "getpwnam", return_value=account), mock.patch.object(installer, "local_addresses", return_value=["192.168.1.20", "fd12::20"]), mock.patch.object(installer.sys, "stdout", output):
+            installer.print_installation_access()
+        return output.getvalue()
+
+    def write_token(self, value=None):
+        self.token.write_text((self.code if value is None else value) + "\n")
+        self.token.chmod(0o600)
+
+    def test_private_interface_addresses_exclude_invalid_and_nonlocal_values(self):
+        self.assertTrue(callable(getattr(installer, "local_addresses", None)), "local address discovery is missing")
+        value = b"192.168.1.20 10.2.3.4 172.16.0.1 fd12::20 192.168.1.20 127.0.0.1 ::1 fe80::1 fd12::1%eth0 8.8.8.8 2001:4860::1 0.0.0.0 224.0.0.1 192.0.2.1 bad\x1b\n"
+        with mock.patch.object(installer, "program"), mock.patch.object(installer.subprocess, "check_output", return_value=value):
+            self.assertEqual(installer.local_addresses(), ["192.168.1.20", "10.2.3.4", "172.16.0.1", "fd12::20"])
+
+    def test_unavailable_or_oversized_address_discovery_is_nonfatal(self):
+        self.assertTrue(callable(getattr(installer, "local_addresses", None)), "local address discovery is missing")
+        for failure in (FileNotFoundError(), installer.subprocess.TimeoutExpired("hostname", 3)):
+            with self.subTest(failure=type(failure).__name__), mock.patch.object(installer, "program"), mock.patch.object(installer.subprocess, "check_output", side_effect=failure):
+                self.assertEqual(installer.local_addresses(), [])
+        with mock.patch.object(installer, "program"), mock.patch.object(installer.subprocess, "check_output", return_value=b" " * 65537):
+            self.assertEqual(installer.local_addresses(), [])
+
+    def test_interactive_report_preserves_custom_url_and_displays_existing_code(self):
+        self.write_token()
+        before = self.token.read_bytes()
+        output = self.report()
+        self.assertIn("Dashboard URL: https://panel.example.test", output)
+        self.assertIn("127.0.0.1:8080", output)
+        self.assertIn("192.168.1.20", output)
+        self.assertIn("fd12::20", output)
+        self.assertIn("not dashboard listeners", output)
+        self.assertIn("First-owner setup code: " + self.code, output)
+        self.assertEqual(self.token.read_bytes(), before)
+        self.assertNotIn("http://192.168.1.20", output)
+
+    def test_redirected_output_never_opens_or_prints_token(self):
+        self.write_token()
+        original_open = os.open
+
+        def opened(path, *args, **kwargs):
+            self.assertNotEqual(pathlib.Path(path).name, "setup-token", "redirected reporting opened the secret")
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(installer.os, "open", side_effect=opened):
+            output = self.report(interactive=False)
+        self.assertNotIn(self.code, output)
+        self.assertIn("sudo cat --", output)
+        self.assertIn(str(self.token), output)
+
+    def test_delayed_token_is_read_without_regenerating_it(self):
+        def arrive(_):
+            self.write_token()
+
+        with mock.patch.object(installer.time, "sleep", side_effect=arrive):
+            output = self.report()
+        self.assertIn("First-owner setup code: " + self.code, output)
+        self.assertEqual(self.token.read_text(), self.code + "\n")
+
+    def test_missing_token_has_bounded_wait_and_no_false_completion_claim(self):
+        with mock.patch.object(installer.time, "sleep") as sleep:
+            output = self.report()
+        self.assertLessEqual(sleep.call_count, 20)
+        self.assertGreater(sleep.call_count, 0)
+        self.assertFalse(self.token.exists())
+        self.assertIn("sudo cat --", output)
+        self.assertNotIn("already configured", output)
+        self.assertNotIn("First-owner setup code:", output)
+
+    def test_invalid_url_types_are_nonfatal_and_do_not_display_code(self):
+        self.write_token()
+        for value in (123, True, [], {"url": "https://panel.example.test"}):
+            with self.subTest(value=value):
+                self.config.write_text(json.dumps({"public_url": value, "data_dir": str(self.data)}))
+                try:
+                    output = self.report()
+                except Exception as error:
+                    self.fail("reporting raised instead of failing safely: " + type(error).__name__)
+                self.assertIn("reporting unavailable", output)
+                self.assertNotIn(self.code, output)
+
+    def test_unsafe_tokens_are_not_displayed(self):
+        for kind in ("symlink", "hardlink", "permissions", "oversized", "control", "fifo", "owner"):
+            with self.subTest(kind=kind):
+                self.token.unlink(missing_ok=True)
+                self.write_token()
+                if kind == "symlink":
+                    saved = self.root / "other-token"
+                    self.token.rename(saved)
+                    self.token.symlink_to(saved)
+                elif kind == "hardlink":
+                    os.link(self.token, self.root / "linked-token")
+                elif kind == "permissions":
+                    self.token.chmod(0o644)
+                elif kind == "oversized":
+                    self.token.write_text(self.code + "X" * 1024)
+                elif kind == "control":
+                    self.token.write_text(self.code + "\x1b[2J\n")
+                elif kind == "fifo":
+                    self.token.unlink()
+                    os.mkfifo(self.token)
+                info = self.token.lstat()
+                if kind == "owner":
+                    values = list(info)
+                    values[4] = os.getuid() + 1
+                    with mock.patch.object(installer.os, "fstat", return_value=os.stat_result(values)):
+                        output = self.report()
+                else:
+                    output = self.report()
+                self.assertNotIn(self.code, output)
+                self.assertNotIn("First-owner setup code:", output)
+                self.token.unlink()
+
+
+@unittest.skipUnless(os.geteuid() == 0, "isolated root ownership fixture required")
+class InstallationAccessPathTests(unittest.TestCase):
+    def test_service_relative_default_and_nested_paths_use_real_traversal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            etc, working = root / "etc", root / "panel"
+            etc.mkdir(); working.mkdir(mode=0o700)
+            os.chown(working, 1000, 1000)
+            values = (None, "state", str(working / "nested" / "state"), "")
+            for value in values:
+                with self.subTest(value=value):
+                    data = working / ("data" if value is None else value)
+                    data.mkdir(parents=True, exist_ok=True)
+                    for parent in (data, *data.parents):
+                        if parent == root:
+                            break
+                        os.chown(parent, 1000, 1000); parent.chmod(0o700)
+                    token = data / "setup-token"
+                    token.write_text("R" * 43 + "\n"); token.chmod(0o600); os.chown(token, 1000, 1000)
+                    config = {"public_url": "https://panel.example.test"}
+                    if value is not None:
+                        config["data_dir"] = value
+                    (etc / "config.json").write_text(json.dumps(config))
+                    for interactive in (True, False):
+                        output = io.StringIO(); output.isatty = lambda: interactive
+                        with mock.patch.object(installer, "ETC", str(etc)), mock.patch.object(installer, "DATA", str(working)), mock.patch.object(installer.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000, pw_gid=1000)), mock.patch.object(installer, "local_addresses", return_value=[]), mock.patch.object(installer.sys, "stdout", output):
+                            installer.print_installation_access()
+                        if interactive:
+                            self.assertIn("First-owner setup code: " + "R" * 43, output.getvalue())
+                        else:
+                            self.assertIn("sudo cat -- " + str(token), output.getvalue())
+                            self.assertNotIn("R" * 43, output.getvalue())
+                    self.assertEqual(token.read_text(), "R" * 43 + "\n")
+            with self.assertRaisesRegex(ValueError, "unsafe ownership"):
+                with installer.directory(str(working / "nested" / "state"), owner=(1000, 1000)):
+                    self.fail("installation traversal accepted panel-owned ancestors")
+
+    def test_unsafe_data_ancestors_do_not_display_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); etc = root / "etc"; etc.mkdir()
+            for kind in ("symlink", "permissions", "foreign"):
+                with self.subTest(kind=kind):
+                    parent = root / kind; parent.mkdir(mode=0o700); os.chown(parent, 1000, 1000)
+                    data = parent / "state"; data.mkdir(mode=0o700); os.chown(data, 1000, 1000)
+                    token = data / "setup-token"; token.write_text("R" * 43 + "\n"); token.chmod(0o600); os.chown(token, 1000, 1000)
+                    path = data
+                    if kind == "symlink":
+                        link = root / "link"; link.symlink_to(parent); path = link / "state"
+                    elif kind == "permissions":
+                        parent.chmod(0o770)
+                    else:
+                        os.chown(parent, 2000, 2000)
+                    (etc / "config.json").write_text(json.dumps({"public_url": "https://panel.example.test", "data_dir": str(path)}))
+                    output = io.StringIO(); output.isatty = lambda: True
+                    with mock.patch.object(installer, "ETC", str(etc)), mock.patch.object(installer.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000, pw_gid=1000)), mock.patch.object(installer, "local_addresses", return_value=[]), mock.patch.object(installer.sys, "stdout", output):
+                        installer.print_installation_access()
+                    self.assertNotIn("R" * 43, output.getvalue())
+                    self.assertIn("reporting unavailable", output.getvalue())
 
 
 class ReleaseVerificationTests(unittest.TestCase):

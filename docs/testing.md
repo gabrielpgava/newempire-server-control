@@ -3,8 +3,9 @@
 Run `make check` followed by `make security` on the complete integrated source.
 These are local gates, not claims that every product acceptance criterion has
 already been verified. Report actual commands, source revision, failures and
-skipped checks in each PR. GitHub Actions workflows are disabled by the owner's
-budget policy; no GitHub-hosted checks run from this source tree.
+skipped checks in each PR. Automatic GitHub CI is disabled by the owner's budget
+policy. The manual-only release workflow builds and verifies publication assets;
+it does not replace the locally reviewed gates and needs explicit per-run approval.
 
 ## Automated gates
 
@@ -25,7 +26,9 @@ budget policy; no GitHub-hosted checks run from this source tree.
 
 Run only the automation suite with `make release-test`. The GitHub API is faked
 in publication tests: they check write ordering, explicit draft retries, source
-identity checks, read-back corruption detection and non-overwrite behavior. They
+identity checks, read-back corruption detection and non-overwrite behavior. Makefile
+tests also check missing-version refusal and unsigned distro/SBOM commands; workflow
+contracts and pinned actionlint check manual triggers, permissions and secret scope. They
 do not create releases. Cryptographic and archive tests use dummy fixtures and
 test keys, never production signing material.
 
@@ -85,8 +88,8 @@ the documented least-privilege install:
    commands and observed failures/recovery. Do not claim success without that
    evidence. No optional systemd job is wired to an unimplemented test command.
 
-Publication also requires trusted source/permissions, an available signing key,
-uploaded/read-back assets and verified provenance. The retained publisher requires
-the removed GitHub workflow context, so official publication is currently blocked.
-Mocked GitHub tests do not prove any of these external facts. See
+Publication also requires trusted source/permissions, a matching signing key,
+uploaded/read-back assets and verified provenance from the protected-main manual
+workflow. Enable Actions only for an explicitly authorized run and disable it
+afterward. Mocked GitHub tests do not prove any of these external facts. See
 [the release runbook](releases.md) for the current boundary.
