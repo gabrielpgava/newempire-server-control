@@ -23,6 +23,7 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 
 ### Fixed
 
+- Reject ambiguous or automatic workflow triggers before local publication, pin GitHub operations to the official host, and abort/reap stalled draft downloads without modifying candidates or publishing.
 - Validate portable backup instance metadata before stopping Minecraft or replacing world data; restore archived service memory settings as well as Java/launcher choices.
 - Keep interrupted full-tree restores blocked until explicitly selected data and runtime metadata are reconciled against a verified snapshot; never automatically replace a world during reconciliation.
 - Verify retained runtime recovery against the original snapshot, preserve displaced data, and latch world-format review before metadata replacement.

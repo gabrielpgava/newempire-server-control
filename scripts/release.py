@@ -6,10 +6,12 @@ import json
 import os
 import pathlib
 import re
+import selectors
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from urllib.parse import quote
 
 REPOSITORY = 'gabrielpgava/newempire-server-control'
@@ -17,6 +19,7 @@ WORKFLOW = f'{REPOSITORY}/.github/workflows/release.yml'
 CONVENTIONAL = re.compile(r'^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([^\r\n()]+\))?(!)?: [^\r\n]+$')
 SEMVER = re.compile(r'^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$')
 LEVELS = ['auto', 'patch', 'minor', 'major']
+TRANSFER_TIMEOUT = 60
 
 
 def run(*args, **kwargs):
@@ -100,7 +103,7 @@ def check_pr(event):
 
 class GitHub:
     def api(self, path, method='GET', data=None):
-        args = ['gh', 'api', '--method', method, f'repos/{REPOSITORY}/{path}']
+        args = ['gh', 'api', '--hostname', 'github.com', '--method', method, f'repos/{REPOSITORY}/{path}']
         if data is not None:
             args += ['--input', '-']
         raw = run(*args, input=json.dumps(data) if data is not None else None)
@@ -125,22 +128,37 @@ class GitHub:
             page += 1
 
     def download(self, asset, destination, limit):
-        args = ['gh', 'api', f'repos/{REPOSITORY}/releases/assets/{asset["id"]}',
+        args = ['gh', 'api', '--hostname', 'github.com', f'repos/{REPOSITORY}/releases/assets/{asset["id"]}',
                 '-H', 'Accept: application/octet-stream']
+        deadline = time.monotonic() + TRANSFER_TIMEOUT
         with subprocess.Popen(args, stdout=subprocess.PIPE) as process:
-            with destination.open('xb') as output:
-                size = 0
-                while chunk := process.stdout.read(1 << 20):
-                    size += len(chunk)
-                    if size > limit:
-                        process.kill()
-                        raise ValueError(f'Download exceeds the expected size: {asset["name"]}')
-                    output.write(chunk)
-            if process.wait(timeout=60) != 0:
-                raise ValueError(f'Could not download draft asset: {asset["name"]}')
+            try:
+                with destination.open('xb') as output, selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    size = 0
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not selector.select(remaining):
+                            raise ValueError(f'Timed out downloading draft asset: {asset["name"]}')
+                        chunk = os.read(process.stdout.fileno(), 1 << 20)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > limit:
+                            raise ValueError(f'Download exceeds the expected size: {asset["name"]}')
+                        output.write(chunk)
+                try:
+                    status = process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    raise ValueError(f'Timed out downloading draft asset: {asset["name"]}') from None
+                if status != 0:
+                    raise ValueError(f'Could not download draft asset: {asset["name"]}')
+            finally:
+                if process.poll() is None:
+                    process.kill()
 
     def upload(self, tag, path):
-        run('gh', 'release', 'upload', tag, str(path), '--repo', REPOSITORY)
+        run('gh', 'release', 'upload', tag, str(path), '--repo', f'github.com/{REPOSITORY}')
 
 
 def guard(github, sha):
@@ -172,10 +190,15 @@ def guard_local(github, sha):
         if not name or path.suffix not in ('.yaml', '.yml'):
             continue
         text = '\n' + path.read_text() if not path.is_symlink() else ''
-        if text.count('\non:\n') != 1:
+        keys = [re.fullmatch(r'([a-z][a-z_-]*):.*', line) for line in text.splitlines()
+                if line and not line[0].isspace() and not line.startswith('#')]
+        if (any(key is None for key in keys) or [key[1] for key in keys].count('on') != 1
+                or text.count('\non:\n') != 1):
             raise ValueError('Cannot verify workflow triggers; local publication stopped')
         triggers = re.split(r'\n(?=\S)', text.split('\non:\n', 1)[1], maxsplit=1)[0]
-        if (re.findall(r'^  ([a-z_]+):', triggers, re.MULTILINE) != ['workflow_dispatch']
+        events = [line for line in triggers.splitlines() if line.strip()
+                  and not line.lstrip().startswith('#') and not line.startswith('    ')]
+        if (events != ['  workflow_dispatch:']
                 or any(value in triggers for value in ('\t', '*', '&', '<<:'))):
             raise ValueError('A workflow may run automatically; local publication stopped')
     branch = github.api('branches/main')

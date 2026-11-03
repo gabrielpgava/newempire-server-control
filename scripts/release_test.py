@@ -6,12 +6,70 @@ import os
 import pathlib
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 import release
+
+
+def github_cli(directory):
+    executable = directory / 'gh'
+    executable.write_text(f'#!{sys.executable}\n' + '''import json, os, pathlib, sys, threading
+args = sys.argv[1:]
+if args[0] == 'api':
+    host = args[args.index('--hostname') + 1] if '--hostname' in args else os.environ['GH_HOST']
+    if any('/releases/assets/' in value for value in args):
+        if os.environ.get('GH_TEST_STALL') == '1':
+            pathlib.Path(os.environ['GH_TEST_PID']).write_text(str(os.getpid()))
+            sys.stdout.buffer.write(b'x')
+            sys.stdout.buffer.flush()
+            threading.Event().wait(3)
+        else:
+            sys.stdout.buffer.write(b'official' if host == 'github.com' else b'mirror')
+    else:
+        print(json.dumps({'host': host}))
+elif args[:2] == ['release', 'upload']:
+    repository = args[args.index('--repo') + 1]
+    host = repository.split('/')[0] if repository.count('/') == 2 else os.environ['GH_HOST']
+    pathlib.Path(os.environ['GH_TEST_UPLOAD_HOST']).write_text(host)
+else:
+    raise SystemExit('Unexpected CLI operation')
+''')
+    executable.chmod(0o755)
+    return mock.patch.dict(os.environ, {
+        'PATH': str(directory) + os.pathsep + os.environ['PATH'],
+        'GH_HOST': 'mirror.example.invalid',
+        'GH_TEST_PID': str(directory / 'downloader.pid'),
+        'GH_TEST_UPLOAD_HOST': str(directory / 'upload-host'),
+    })
+
+
+class GitHubTransport(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = pathlib.Path(self.temporary.name)
+        self.cli = github_cli(self.directory)
+        self.cli.start()
+        self.addCleanup(self.cli.stop)
+
+    def test_api_pins_official_host_despite_ambient_host(self):
+        self.assertEqual(release.GitHub().api('branches/main')['host'], 'github.com')
+
+    def test_download_pins_official_host_despite_ambient_host(self):
+        destination = self.directory / 'download'
+        release.GitHub().download({'id': 17, 'name': 'asset'}, destination, 8)
+        self.assertEqual(destination.read_bytes(), b'official')
+
+    def test_upload_pins_official_host_despite_ambient_host(self):
+        asset = self.directory / 'asset'
+        asset.write_bytes(b'candidate')
+        release.GitHub().upload('v1.2.3', asset)
+        self.assertEqual((self.directory / 'upload-host').read_text(), 'github.com')
 
 
 class Versions(unittest.TestCase):
@@ -158,7 +216,17 @@ class LocalGuard(unittest.TestCase):
                 release.guard_local(self.github, self.sha)
 
     def test_local_guard_rejects_cloud_triggers(self):
-        for trigger in ('on:\n  push:\n', 'on: [release]\n', '"on":\n  push:\n'):
+        for trigger in (
+                'on:\n  push:\n', 'on: [release]\n', '"on":\n  push:\n',
+                'on:\n  workflow_dispatch:\n  "release":\n    types: [published]\n',
+                "on:\n  workflow_dispatch:\n  'push':\n",
+                'on:\n  workflow_dispatch:\n  release :\n    types: [published]\n',
+                'on:\n  workflow_dispatch:\n"on": [release]\n',
+                "on:\n  workflow_dispatch:\n'on': [release]\n",
+                'on:\n  workflow_dispatch:\non: [release]\n',
+                'on: [release]\non:\n  workflow_dispatch:\n',
+                'on:\n  workflow_dispatch:\non : [release]\n',
+                'on:\n  workflow_dispatch:\n"o\\u006e": [release]\n'):
             with self.subTest(trigger=trigger):
                 self.workflow.write_text('name: Release\n' + trigger)
                 self.git('add', '.')
@@ -442,6 +510,22 @@ class Publication(unittest.TestCase):
             self.publish(local=True)
         self.assertEqual(self.github.events.count('download'), 9)
         self.assertNotIn('publish', self.github.events)
+
+    def test_stalled_download_is_reaped_without_publishing_or_changing_candidates(self):
+        self.local_assets()
+        self.github.download = release.GitHub().download
+        before = {path.name: path.read_bytes() for path in self.assets.iterdir()}
+        with github_cli(self.directory), mock.patch.dict(os.environ, {'GH_TEST_STALL': '1'}), \
+                mock.patch.object(release, 'TRANSFER_TIMEOUT', 0.5, create=True):
+            started = time.monotonic()
+            with self.assertRaisesRegex(ValueError, 'Timed out'):
+                self.publish(local=True)
+            self.assertLess(time.monotonic() - started, 2)
+        pid = int((self.directory / 'downloader.pid').read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        self.assertNotIn('publish', self.github.events)
+        self.assertEqual({path.name: path.read_bytes() for path in self.assets.iterdir()}, before)
 
     def test_publish_is_last_mutation_after_readback(self):
         self.publish()

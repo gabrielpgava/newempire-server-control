@@ -62,8 +62,10 @@ verified with the production trust root. No private key is retained.
 
    Create the ignored `dist/` parent first if absent. `plan --live --local` rejects
    dirty/non-main/forked sources, unprotected or moved remote main and workflow
-   triggers other than the explicitly recognized manual-only form. It does not
-   impersonate Actions or require `GITHUB_*` environment variables.
+    triggers other than the explicitly recognized manual-only form. It does not
+    impersonate Actions or require `GITHUB_*` environment variables.
+    Unrecognized/quoted/duplicate event-map syntax is rejected rather than
+    guessed; preserve the existing plain block-style manual-only workflow.
 3. Read `version` and `commit` from the plan as `VERSION` and `SHA`. Build unsigned
    candidates without the signing key, then build the signer from this same
    clean verified source. Use a new output directory for every attempt:
@@ -98,9 +100,12 @@ verified with the production trust root. No private key is retained.
    ```
 
    The publisher verifies signatures before creating a draft, uploads without
-   overwriting, downloads every asset with bounds and re-verifies it, rechecks
-   main/tag identity, publishes **last**, then verifies stable latest discovery.
-   Record the actual release URL and exact source SHA. Do not enable Actions.
+    overwriting, downloads every asset with size bounds and a 60-second total
+    deadline and re-verifies it, rechecks
+    main/tag identity, publishes **last**, then verifies stable latest discovery.
+    API/download operations and uploads explicitly select `github.com`, ignoring
+    an ambient `GH_HOST`. Record the actual release URL and exact source SHA.
+    Do not enable Actions.
 
 Inspect actual release/tag state after any failure or lost response: publication
 may have succeeded even if the client response was lost. An explicit
