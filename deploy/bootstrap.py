@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-SOURCE_COMMIT = "0bc59f9cb537982048c4d1cbef355ccf982d072c"
+SOURCE_COMMIT = "884c435326fd9ed346ef6dd41aecdb68fd22088b"
 FILES = {
     "install.py": "cc981a47ce8460d85cab120e4b1853a20f738bc6d521a07c5258feee70e6e4ab",
     "install.sh": "e9171efef22e7dc941a4cf866161cc549a0bd4b0035352fd3e24bb74ab2f6467",
