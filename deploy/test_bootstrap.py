@@ -310,6 +310,8 @@ print(os.environ["HTTP_STATUS"], end="")
                 body = body.replace("curl --disable", python + " -I " + shlex.quote(str(root / "curl.py")) + " --disable")
                 body = body.replace("timeout 10 /usr/bin/python3", python + " -I " + shlex.quote(str(root / "timeout.py")) + " 10 /usr/bin/python3")
                 body = body.replace('/usr/bin/python3 -I "$work/bootstrap.py"', python + " -I " + shlex.quote(str(root / "executed.py")) + ' "$work/bootstrap.py"')
+                if bootstrap.sys.platform == "darwin":
+                    body = body.replace("sha256sum --check --status", "/usr/bin/shasum -a 256 --check --status")
                 body = re.sub(r"\b[0-9a-f]{64}\b", digest, body)
                 environment = {"PATH": "/usr/bin:/bin", "HOME": temporary, "DNS_VALUES": json.dumps(addresses), "HTTP_STATUS": status, "PAYLOAD": str(HERE / "bootstrap.py"), "TRACE": str(root / "trace"), "EXECUTED": str(root / "executed")}
                 result = bootstrap.subprocess.run(["/bin/sh", "-c", body, "sh", "1.2.3", "/usr/lib/jvm/example/bin/java"], env=environment, stdout=bootstrap.subprocess.PIPE, stderr=bootstrap.subprocess.PIPE, timeout=3)

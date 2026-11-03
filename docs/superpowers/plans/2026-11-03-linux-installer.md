@@ -58,8 +58,23 @@
 
 **Files:** Update the two checklist documents with actual results only; no application/API changes.
 
-- [ ] Run `make check` and `make security` with the verified local toolchain; record exact revision, warnings and skips.
+- [x] Run `make check` and `make security` with the verified local toolchain; record exact revision, warnings and skips.
 - [ ] Build Linux amd64 and arm64 candidates locally with the embedded UI and unchanged production public key before any push; do not publish unsigned candidates.
 - [ ] Review the complete diff, validate README command syntax and relative links, and confirm `dev`, clean staging scope and unchanged disabled Actions policy.
 - [ ] Push `dev` and propose a conventional feature PR to `main`; do not reuse PR #1's protection exception or bypass mandatory review.
 - [ ] Report implementation, executed checks, unrun real-host installation and the exact signed-publication blocker. Do not restart the retained VM or publish a release.
+
+#### Executed verification after review fixes
+
+On 2026-11-03 UTC, `make check security` passed on `dc3e895` plus the
+macOS-only checksum-fixture correction subsequently committed with this record,
+using Go 1.27.3 and Node 26.13.0. It ran 108 frontend tests, 20 script tests,
+38 deployment tests (three root-only skips on macOS), vet, all-package Go race
+tests, frontend/native builds and security scans. The isolated, read-only,
+network-disabled Linux root fixture passed all 38 deployment tests with no
+skips. Ten existing OpenAPI warnings, npm install-script policy warnings and
+test-DOM navigation diagnostics remain unsuppressed. Go scanning found no
+reachable or imported-package vulnerabilities and one unused module advisory;
+the production npm audit found none. Earlier failed host-fixture execution is
+not counted as a pass. Candidate builds, remote integration and release status
+must be recorded separately when actually performed.
