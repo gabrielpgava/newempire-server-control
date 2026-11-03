@@ -16,6 +16,7 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 - Embedded React/TypeScript interface, administrative CLI, deployment assets, and signed panel-release/update infrastructure.
 - Locked offline backup, retained-data recovery and emergency owner access without a running HTTP panel; existing-state-only loading and targeted durable jobs prevent accidental bootstrap or unrelated queued execution.
 - English public-product guides, OpenAPI 3.1 schemas, upstream references, and an acceptance-evidence matrix.
+- Native installer access summary with the configured dashboard URL, informational private interface addresses, and protected first-owner code display only on an interactive terminal; redirected output never reads the code.
 
 ### Fixed
 

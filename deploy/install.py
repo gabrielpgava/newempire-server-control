@@ -12,9 +12,11 @@ import os
 import pathlib
 import pwd
 import re
+import shlex
 import socket
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -246,6 +248,68 @@ def install(args, stage, java_paths):
     command("/usr/bin/systemctl", "enable", "--now", "new-empire-control.service")
 
 
+def local_addresses():
+    try:
+        program("/usr/bin/hostname")
+        raw = subprocess.check_output(["/usr/bin/hostname", "-I"], timeout=3, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"})
+        if len(raw) > 65536:
+            return []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    networks = [ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")]
+    result = []
+    for value in raw.decode("ascii", errors="replace").split():
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if "%" not in value and any(address in network for network in networks) and str(address) not in result:
+            result.append(str(address))
+    return result
+
+
+def print_installation_access():
+    try:
+        with directory(ETC):
+            config = json.loads(vr.read_regular(ETC + "/config.json", 65536))
+        url = config["public_url"]
+        parsed = urllib.parse.urlsplit(url)
+        if not isinstance(url, str) or not re.fullmatch(r"[!-~]+", url) or parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("invalid dashboard URL")
+        print("Dashboard URL: " + url)
+        print("Default localhost address (fresh installs): http://127.0.0.1:8080 (http://localhost:8080)")
+        addresses = local_addresses()
+        print("Local interface addresses (not dashboard listeners): " + (", ".join(addresses) if addresses else "unavailable"))
+        print("Loopback is the default. Remote access requires an SSH tunnel or a configured HTTPS reverse proxy; no network binding was changed.")
+        data_dir = config.get("data_dir", DATA)
+        account = pwd.getpwnam(PANEL)
+        token_path = str(pathlib.Path(data_dir) / "setup-token")
+        read_command = "sudo cat -- " + shlex.quote(token_path)
+        if not sys.stdout.isatty():
+            print("First-owner code omitted from non-interactive output. If setup is required, read it locally: " + read_command)
+            return
+        for attempt in range(20):
+            try:
+                with directory(data_dir, owner=(account.pw_uid, account.pw_gid)) as parent:
+                    fd = os.open("setup-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                    with os.fdopen(fd, "rb") as source:
+                        info = os.fstat(source.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != account.pw_uid or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size != 44:
+                            raise ValueError("unsafe setup-code file")
+                        token = source.read(45)
+                if not re.fullmatch(rb"[A-Za-z0-9_-]{43}\n", token):
+                    raise ValueError("invalid setup-code file")
+                print("First-owner setup code: " + token.decode("ascii").rstrip("\n"))
+                print("Use this code to create the first owner in the dashboard. Keep it private; do not share terminal recordings.")
+                return
+            except FileNotFoundError:
+                if attempt < 19:
+                    time.sleep(0.5)
+        print("Setup code unavailable: startup may be pending or first-owner setup may be complete. If required, read it locally: " + read_command)
+    except (OSError, ValueError, TypeError, KeyError):
+        print("Access/setup-code reporting unavailable: inspect the installed configuration and protected setup-token ownership/permissions locally. No code was generated or replaced.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="explicit stable SemVer, without v")
@@ -288,7 +352,8 @@ def main():
                     download(f"https://github.com/{vr.REPOSITORY}/releases/download/v{args.version}/{name}", stage / name, limit)
             vr.verify(argparse.Namespace(manifest=str(stage / "release.json"), signature=str(stage / "release.json.sig"), public_key=args.public_key, version=args.version, arch=arch, archive=str(stage / f"new-empire-control_{args.version}_linux_{arch}.tar.gz"), output=str(stage / "new-empire-control")))
             install(args, stage, java_paths)
-        print("Installed signed release " + args.version + ". Panel: http://127.0.0.1:8080. Read the protected bootstrap token in " + DATA + ".")
+        print("Installed signed release " + args.version + "; enabled new-empire-control.service.")
+        print_installation_access()
         print("Minecraft instances require independent root registration with install-service; none were started.")
     except (ValueError, TypeError, KeyError, OSError, EOFError, tarfile.TarError, subprocess.SubprocessError) as error:
         parser.exit(1, "Installation stopped: " + str(error) + ". Existing instance data was not modified. Review partial host setup before retrying.\n")

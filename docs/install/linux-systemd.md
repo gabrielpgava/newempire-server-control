@@ -95,6 +95,31 @@ protected panel state directory. Use an SSH tunnel for initial setup or configur
 an HTTPS reverse proxy and matching `public_url`/secure cookies before remote
 access. Do not expose the loopback development origin or RCON publicly.
 
+After enabling `new-empire-control.service`, the installer prints the configured
+dashboard URL, the default localhost address, and detected RFC1918/IPv6 ULA
+interface addresses. Those interface addresses are **not dashboard listeners**:
+the installer does not change the loopback binding, existing custom `public_url`,
+or firewall policy. Missing address discovery is non-fatal.
+
+On an interactive terminal it waits up to ten seconds for the existing protected
+`setup-token` and shows the **first-owner setup code**. Enter that code in the
+dashboard to create your first login; there is no default username/password.
+Keep the code private and do not record/share that terminal. The file must be an
+ordinary single-link, panel-owned mode-0600 file with the expected token format;
+links, devices, unsafe permissions and malformed/oversized contents are refused.
+
+Redirected/non-interactive output never opens or prints the code. Instead it
+shows a local administrator read command, normally:
+
+```sh
+sudo cat -- /var/lib/new-empire-control/setup-token
+```
+
+An unavailable code can mean startup is pending or first-owner setup is complete;
+it is not proof of either. Inspect service status and protected file permissions
+locally if necessary. Installation never regenerates the token or retrieves it
+over HTTP. Existing custom data-directory settings are respected.
+
 Existing panel-owned `updates/` directories are refused. Do not recursively chown
 them into trust: preserve and inspect legacy state offline, then provision a
 fresh root-owned private directory. The panel never needs direct staging/journal
