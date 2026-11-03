@@ -17,7 +17,7 @@ frontend and does not require Node.js.
   Minecraft/Fabric metadata, not a guessed Java version.
 - A root administrator for initial setup. The HTTP panel always runs as the
   non-login `new-empire-control` account, never root.
-- For the one-line bootstrap: curl, `sha256sum`, `mktemp`, sudo access, and a
+- For the one-line bootstrap: curl, `sha256sum`, `mktemp`, `timeout`, sudo access, and a
   root-owned `/root` directory for private staging.
 
 Download/review the deployment asset from the official
@@ -46,13 +46,20 @@ not execute an unauthenticated `curl | sh` response. It requires the same explic
 stable `VERSION` and approved `JAVA_EXECUTABLE` as the installer below. **No
 official signed release is published yet; release installation remains blocked.**
 
+The initial command bounds DNS lookup to ten seconds, refuses empty or non-public
+results, pins a validated address for curl, disables proxy selection, and requires
+HTTP 200 within thirty seconds before checking the bootstrap checksum. A redirect
+response is refused even if its body happens to match the expected checksum.
+
 The bootstrap downloads exactly nine deployment files from the official
-repository at immutable commit `646bb0deab8e0128c051df7028f8cc41caa98b5b`.
+repository at immutable commit `0bc59f9cb537982048c4d1cbef355ccf982d072c`.
 Each file must match its embedded SHA-256 before any installer code runs. Downloads
 use normal TLS certificate/hostname verification, reject non-public DNS results
-and redirects, and are bounded to 64 KiB per file and a 30-second read deadline
-with 10-second socket timeouts. No proxy or alternative origin is selected from
-environment variables. Private staging is removed on normal completion/failure.
+and redirects, and are bounded to 64 KiB per file. A separate worker bounds the
+complete transfer, including DNS, TLS, headers and chunk framing, to thirty seconds
+plus at most two seconds of worker cleanup; socket timeouts are ten seconds.
+No proxy or alternative origin is selected from environment variables. Private
+staging is removed on normal completion/failure.
 The existing native installer still independently verifies the release manifest,
 production key, archive hash and architecture; the bootstrap is not a release
 publisher or an unsigned-install fallback.
@@ -145,7 +152,13 @@ sudo cat -- /var/lib/new-empire-control/setup-token
 An unavailable code can mean startup is pending or first-owner setup is complete;
 it is not proof of either. Inspect service status and protected file permissions
 locally if necessary. Installation never regenerates the token or retrieves it
-over HTTP. Existing custom data-directory settings are respected.
+over HTTP. Existing custom data-directory settings are resolved relative to the
+service's working directory, `/var/lib/new-empire-control`, not the administrator's
+shell. An omitted/null `data_dir` uses its `data` child, matching the application;
+an empty value uses the working directory itself. Absolute paths are preserved.
+Nested panel-owned directories are supported for reporting, but every component
+must be a real directory, owned by root or the panel and not group/world writable.
+The stricter root-only ancestor rules for installation files remain unchanged.
 
 Existing panel-owned `updates/` directories are refused. Do not recursively chown
 them into trust: preserve and inspect legacy state offline, then provision a

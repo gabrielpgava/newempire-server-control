@@ -60,15 +60,17 @@ published stable `VERSION` (without `v`) and set `JAVA_EXECUTABLE` to an
 administrator-approved absolute Java executable path before running this line:
 
 ```sh
-( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; curl --disable --fail --silent --show-error --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 --max-filesize 65536 https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"; printf "%s  %s\n" 0e99898b9b8744bc7a4d73cb6debc3f1648408b0983d08552816b132e4e15ed5 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
+( : "${VERSION:?Set VERSION to a published stable version without v}"; : "${JAVA_EXECUTABLE:?Set JAVA_EXECUTABLE to an approved absolute Java path}"; sudo /bin/sh -c 'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; unset PYTHONHOME PYTHONPATH LD_PRELOAD LD_LIBRARY_PATH; umask 077; work=$(mktemp -d /root/new-empire-bootstrap.XXXXXXXX); trap "rm -f -- $work/bootstrap.py; rmdir -- $work" 0; ip=$(timeout 10 /usr/bin/python3 -I -c "import ipaddress,socket,sys; a=socket.getaddrinfo(\"raw.githubusercontent.com\",443,type=socket.SOCK_STREAM); a and all(ipaddress.ip_address(x[4][0]).is_global for x in a) or sys.exit(\"Non-public bootstrap destination\"); p=ipaddress.ip_address(a[0][4][0]); print(\"[\"+str(p)+\"]\" if p.version==6 else str(p))"); status=$(curl --disable --fail --silent --show-error --proto "=https" --tlsv1.2 --noproxy "*" --resolve "raw.githubusercontent.com:443:$ip" --connect-timeout 10 --max-time 30 --max-filesize 65536 --write-out "%{http_code}" https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py -o "$work/bootstrap.py"); [ "$status" = 200 ]; printf "%s  %s\n" 423d95deb5bde6041a127a8ef441cac61639ef5aae64b607e1f290c869e91c91 "$work/bootstrap.py" | sha256sum --check --status; /usr/bin/python3 -I "$work/bootstrap.py" --version "$1" --java "$2"' sh "$VERSION" "$JAVA_EXECUTABLE" )
 ```
 
 Requires the [Linux/systemd prerequisites](docs/install/linux-systemd.md), curl,
-`sha256sum`, `mktemp`, and root administration through sudo. No Go or Node.js is
-needed on the destination. The command verifies the bootstrap's SHA-256 **before
+`sha256sum`, `mktemp`, coreutils `timeout`, and root administration through sudo.
+No Go or Node.js is needed on the destination. The command verifies the bootstrap's SHA-256 **before
 execution**; that bootstrap verifies nine deployment files pinned to an immutable
 official source revision, then uses the existing pinned-key signed-release
-installer. Copy the command/checksum from reviewed official documentation.
+installer. The initial curl pins a validated public address, bypasses environment
+proxies and requires HTTP 200; redirects are rejected. Copy the command/checksum
+from reviewed official documentation.
 
 Installation enables `new-empire-control.service` and reports the configured
 dashboard URL, default **http://127.0.0.1:8080** / **http://localhost:8080**, and

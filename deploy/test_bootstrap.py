@@ -2,9 +2,14 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import json
 import os
 import pathlib
+import re
+import shlex
 import socket
+import threading
+import time
 import tempfile
 import unittest
 from unittest import mock
@@ -61,7 +66,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_stage_matches_all_nine_pinned_source_files(self):
         self.require_bootstrap()
-        self.assertEqual(bootstrap.SOURCE_COMMIT, "646bb0deab8e0128c051df7028f8cc41caa98b5b")
+        self.assertEqual(bootstrap.SOURCE_COMMIT, "0bc59f9cb537982048c4d1cbef355ccf982d072c")
         self.assertEqual(set(bootstrap.FILES), set(NAMES))
         with tempfile.TemporaryDirectory() as temporary, self.transport():
             stage = pathlib.Path(temporary)
@@ -135,7 +140,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(resolve.call_count, 1)
         client.connect.assert_called_once_with(target)
 
-    def run_main(self, transform=None):
+    def run_main(self, transform=None, transport=None):
         temporary = tempfile.TemporaryDirectory()
         stage = pathlib.Path(temporary.name)
         output = io.StringIO()
@@ -151,10 +156,70 @@ class BootstrapTests(unittest.TestCase):
             for name in NAMES:
                 self.assertEqual((stage / name).read_bytes(), (HERE / name).read_bytes())
 
-        with mock.patch.object(bootstrap.tempfile, "TemporaryDirectory", return_value=temporary), mock.patch.object(bootstrap.os, "getuid", return_value=0), mock.patch.object(bootstrap.os, "geteuid", return_value=0), mock.patch.object(bootstrap.sys, "platform", "linux"), mock.patch.object(bootstrap.sys, "argv", ["bootstrap.py", *arguments]), mock.patch.object(bootstrap.sys, "stderr", output), mock.patch.object(bootstrap.subprocess, "run", side_effect=installed), self.transport(transform):
+        with mock.patch.object(bootstrap.tempfile, "TemporaryDirectory", return_value=temporary), mock.patch.object(bootstrap.os, "getuid", return_value=0), mock.patch.object(bootstrap.os, "geteuid", return_value=0), mock.patch.object(bootstrap.sys, "platform", "linux"), mock.patch.object(bootstrap.sys, "argv", ["bootstrap.py", *arguments]), mock.patch.object(bootstrap.sys, "stderr", output), mock.patch.object(bootstrap.subprocess, "run", side_effect=installed), (transport if transport is not None else self.transport(transform)):
             result = bootstrap.main()
         self.assertFalse(stage.exists(), "private staging must be removed on success and failure")
         return result, calls, output.getvalue()
+
+    @contextlib.contextmanager
+    def slow_transport(self, phase):
+        def connected(*args, **kwargs):
+            client, server = socket.socketpair()
+            class LocalSocket(socket.socket):
+                def setsockopt(self, level, option, value):
+                    if level != socket.IPPROTO_TCP or option != socket.TCP_NODELAY:
+                        super().setsockopt(level, option, value)
+            client = LocalSocket(fileno=client.detach())
+            client.settimeout(10)
+
+            def serve():
+                with server:
+                    try:
+                        request = b""
+                        while b"\r\n\r\n" not in request:
+                            request += server.recv(4096)
+                        name = request.split(b" ")[1].decode().split("/deploy/", 1)[1]
+                        data = (HERE / name).read_bytes()
+                        if name == "install.py" and phase == "headers":
+                            for value in b"HTTP/1.1 200 OK\r\n":
+                                server.sendall(bytes([value])); time.sleep(0.01)
+                            server.sendall(b"Content-Length: " + str(len(data)).encode() + b"\r\n\r\n" + data)
+                        elif name == "install.py":
+                            server.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                            for value in b"0000000000000001\r\n":
+                                server.sendall(bytes([value])); time.sleep(0.01)
+                            server.sendall(data[:1] + b"\r\n" + format(len(data) - 1, "x").encode() + b"\r\n" + data[1:] + b"\r\n0\r\n\r\n")
+                        else:
+                            server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(data)).encode() + b"\r\n\r\n" + data)
+                    except OSError:
+                        pass
+
+            threading.Thread(target=serve, daemon=True).start()
+            return client
+
+        with mock.patch.object(bootstrap.http.client, "HTTPSConnection", bootstrap.http.client.HTTPConnection), mock.patch.object(bootstrap, "public_socket", side_effect=connected):
+            yield
+
+    def test_wall_clock_bounds_slow_headers_and_chunk_framing_before_install(self):
+        for phase in ("headers", "chunk framing"):
+            with self.subTest(phase=phase), mock.patch.object(bootstrap, "TRANSFER_TIMEOUT", 0.05, create=True):
+                started = time.monotonic()
+                result, calls, output = self.run_main(transport=self.slow_transport(phase))
+                self.assertEqual(result, 1)
+                self.assertEqual(calls, [])
+                self.assertLess(time.monotonic() - started, 1)
+                self.assertRegex(output, r"time limit|timed out")
+
+    def test_wall_clock_bounds_blocking_dns_before_install(self):
+        def resolve(*args, **kwargs):
+            time.sleep(0.2)
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 443))]
+
+        with mock.patch.object(bootstrap, "TRANSFER_TIMEOUT", 0.05, create=True), mock.patch.object(socket, "getaddrinfo", side_effect=resolve):
+            started = time.monotonic()
+            with self.assertRaises(ValueError):
+                bootstrap.download("install.py")
+            self.assertLess(time.monotonic() - started, 0.18)
 
     def test_installer_runs_only_after_all_files_verify(self):
         self.require_bootstrap()
@@ -162,6 +227,19 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(len(calls), 1)
         self.assertEqual(output, "")
+
+    def test_interrupted_worker_stops_without_installer_or_traceback(self):
+        def interrupted(name, data):
+            os._exit(1)
+
+        try:
+            result, calls, output = self.run_main(interrupted)
+        except EOFError:
+            self.fail("interrupted download escaped the nonfatal bootstrap error handler")
+        self.assertEqual(result, 1)
+        self.assertEqual(calls, [])
+        self.assertIn("Bootstrap stopped", output)
+        self.assertNotIn("Traceback", output)
 
     def test_any_failed_download_prevents_installer_execution(self):
         self.require_bootstrap()
@@ -198,12 +276,54 @@ class BootstrapTests(unittest.TestCase):
         command = commands[0]
         digest = hashlib.sha256((HERE / "bootstrap.py").read_bytes()).hexdigest()
         self.assertIn(digest, command)
-        self.assertLess(command.index("sha256sum"), command.index("/usr/bin/python3 -I"))
+        self.assertLess(command.index("sha256sum"), command.index('/usr/bin/python3 -I "$work/bootstrap.py"'))
         self.assertIn('"${VERSION:?', command)
         self.assertIn('"${JAVA_EXECUTABLE:?', command)
         self.assertNotRegex(command, r"curl[^;]*\|\s*(?:sudo\s+)?(?:sh|bash|python)")
-        self.assertIn("--proto '=https'", command)
+        self.assertRegex(command, r'--proto [\x22\x27]=https[\x22\x27]')
         self.assertIn("--max-time", command)
+
+    def test_readme_initial_fetch_rejects_private_dns_and_checksum_correct_redirects(self):
+        line = next(line for line in (HERE.parent / "README.md").read_text().splitlines() if "curl " in line and "bootstrap.py" in line)
+        arguments = shlex.split(line)
+        original = arguments[arguments.index("-c") + 1]
+        digest = hashlib.sha256((HERE / "bootstrap.py").read_bytes()).hexdigest()
+        for addresses, status, accepted in ((["127.0.0.1"], "200", False), (["93.184.216.34", "10.0.0.1"], "200", False), (["93.184.216.34"], "302", False), (["93.184.216.34"], "200", True), (["2606:4700::1111"], "200", True)):
+            with self.subTest(addresses=addresses, status=status), tempfile.TemporaryDirectory() as temporary:
+                root = pathlib.Path(temporary)
+                (root / "timeout.py").write_text('''import json, os, socket, sys
+from unittest.mock import patch
+assert sys.argv[1:5] == ["10", "/usr/bin/python3", "-I", "-c"]
+values = [(socket.AF_INET6 if ":" in value else socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (value, 443)) for value in json.loads(os.environ["DNS_VALUES"])]
+with patch("socket.getaddrinfo", return_value=values):
+    exec(sys.argv[5], {"__name__": "__main__"})
+''')
+                (root / "curl.py").write_text('''import json, os, pathlib, sys
+pathlib.Path(os.environ["TRACE"]).write_text(json.dumps(sys.argv[1:]))
+pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_bytes(pathlib.Path(os.environ["PAYLOAD"]).read_bytes())
+print(os.environ["HTTP_STATUS"], end="")
+''')
+                (root / "executed.py").write_text('import os, pathlib; pathlib.Path(os.environ["EXECUTED"]).write_text("called")\n')
+                python = shlex.quote(bootstrap.sys.executable)
+                body = original.replace("PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH;", "")
+                body = body.replace("-d /root/new-empire-bootstrap.XXXXXXXX", "-d " + shlex.quote(str(root / "work.XXXXXXXX")))
+                body = body.replace("curl --disable", python + " -I " + shlex.quote(str(root / "curl.py")) + " --disable")
+                body = body.replace("timeout 10 /usr/bin/python3", python + " -I " + shlex.quote(str(root / "timeout.py")) + " 10 /usr/bin/python3")
+                body = body.replace('/usr/bin/python3 -I "$work/bootstrap.py"', python + " -I " + shlex.quote(str(root / "executed.py")) + ' "$work/bootstrap.py"')
+                body = re.sub(r"\b[0-9a-f]{64}\b", digest, body)
+                environment = {"PATH": "/usr/bin:/bin", "HOME": temporary, "DNS_VALUES": json.dumps(addresses), "HTTP_STATUS": status, "PAYLOAD": str(HERE / "bootstrap.py"), "TRACE": str(root / "trace"), "EXECUTED": str(root / "executed")}
+                result = bootstrap.subprocess.run(["/bin/sh", "-c", body, "sh", "1.2.3", "/usr/lib/jvm/example/bin/java"], env=environment, stdout=bootstrap.subprocess.PIPE, stderr=bootstrap.subprocess.PIPE, timeout=3)
+                self.assertEqual((root / "executed").exists(), accepted, result.stderr.decode())
+                if any(not bootstrap.ipaddress.ip_address(value).is_global for value in addresses):
+                    self.assertFalse((root / "trace").exists(), "private DNS reached curl")
+                if accepted:
+                    self.assertEqual(result.returncode, 0)
+                    curl_arguments = json.loads((root / "trace").read_text())
+                    self.assertIn("--resolve", curl_arguments)
+                    self.assertIn("--noproxy", curl_arguments)
+                    target = "[" + addresses[0] + "]" if ":" in addresses[0] else addresses[0]
+                    self.assertEqual(curl_arguments[curl_arguments.index("--resolve") + 1], "raw.githubusercontent.com:443:" + target)
+                    self.assertEqual(curl_arguments[curl_arguments.index("--noproxy") + 1], "*")
 
 
 if __name__ == "__main__":
