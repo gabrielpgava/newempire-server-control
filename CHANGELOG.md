@@ -1,8 +1,8 @@
 # Changelog
 
-All entries are in English. Published releases will use Semantic Versioning; an entry under Unreleased is not a publication claim.
+All entries are in English. Published releases use Semantic Versioning.
 
-## Unreleased
+## [0.1.0] - 2026-11-03
 
 ### Added
 
@@ -42,15 +42,15 @@ All entries are in English. Published releases will use Semantic Versioning; an 
 
 ### Removed
 
-- Automatic GitHub Actions CI/release triggers and their Dependabot update entry to avoid runner costs. Local validation/security commands and signed-update verification remain; only explicitly authorized manual publication is available.
+- Automatic GitHub Actions CI/release triggers and their Dependabot update entry to avoid runner costs. Local validation, signing, and publication are used; the preserved manual workflow remains unused.
 
 ### Project policy
 
 - PolyForm Shield 1.0.0 source-available licensing; not described as OSI-approved open source.
 - Linux/systemd is the primary server runtime. Compose is panel-only; no tested Docker or Paper/Purpur runtime provider is claimed.
-- Significant completed features require a checked, versioned GitHub Release. No release version, publication, real-world deployment, or production-readiness is asserted in this entry.
+- Significant completed features require a checked, versioned GitHub Release; `v0.1.0` is the initial signed stable release.
 
 ### Verification still required
 
-- Maintainer-reviewed local checks, Linux/systemd/firewall and real Minecraft acceptance, Proxmox LXC testing, provider delivery tests, and disaster-recovery drills. Local host/Linux checks and ephemeral-key package smokes are recorded in the acceptance ledger, not claimed as live deployment proof.
-- Confirm release signing and trusted publication, both native architectures, updater discovery, panel-only restart, and post-update rollback on a real host. See [acceptance](docs/acceptance.md) for the evidence boundary.
+- Real Linux/systemd installation, Minecraft readiness, firewall, Proxmox LXC, provider delivery, and disaster-recovery acceptance. Existing host/Linux checks and their limits are recorded in the acceptance ledger; this release is not a production-readiness claim.
+- Application self-updater discovery/staging, panel-only restart, and post-update rollback on a real host. See [acceptance](docs/acceptance.md) for the evidence boundary.
