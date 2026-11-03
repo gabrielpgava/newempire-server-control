@@ -1,0 +1,79 @@
+{
+  "date": "2026-11-03",
+  "source_commit": "a5b34167ba271378b6ec6087e054bb61b061736b",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "release_url": "https://github.com/gabrielpgava/newempire-server-control/releases/tag/v0.1.0",
+  "published_at": "2026-11-03T22:53:16Z",
+  "draft": false,
+  "prerelease": false,
+  "latest_stable": true,
+  "immutable": true,
+  "official_release": true,
+  "signing": "The owner-authorized Ed25519 trust root signed the update metadata and local source-bound provenance. The private key remains outside the repository.",
+  "public_key_sha256": "d7ab48a9fa4414e04027255f140f6677a451e868470e14ef3c64770420d81a7f",
+  "checks": {
+    "make_check": "passed",
+    "frontend_tests": 108,
+    "python_script_tests": 42,
+    "deployment_tests": 43,
+    "go_race_packages": "all passed",
+    "openapi_warnings": 10,
+    "make_security": "passed",
+    "go_advisory_database_modified": "2026-11-02T22:01:43Z",
+    "reachable_go_vulnerabilities": 0,
+    "module_only_advisories": 1,
+    "production_npm_vulnerabilities": 0,
+    "make_dist": "passed for Linux amd64 and arm64 with embedded UI"
+  },
+  "asset_readback_verified": true,
+  "assets": [
+    {
+      "name": "checksums.txt",
+      "size": 549,
+      "sha256": "c2d13b6a680e2bef848d69438ee2a4a102765c67c108b1c96ec47ff98652111b"
+    },
+    {
+      "name": "documentation.tar.gz",
+      "size": 556923,
+      "sha256": "b17f7c6575daf2347fb683a32c0ae99d6ac371597b896f389f10e71c28feb3a7"
+    },
+    {
+      "name": "new-empire-control_0.1.0_linux_amd64.tar.gz",
+      "size": 7178243,
+      "sha256": "c337e176001daa4f6d49688440a66e27cdb422c4f7dab7fe2cf118db8395235b"
+    },
+    {
+      "name": "new-empire-control_0.1.0_linux_arm64.tar.gz",
+      "size": 6623148,
+      "sha256": "af8e2bd69debec4f5856f91250592fbd3d0aed914f984513ad17a21579fcb2dc"
+    },
+    {
+      "name": "provenance.json",
+      "size": 1030,
+      "sha256": "d0f8e6698542e0bf5fbca6fbe93b2b5c4c819b84cff33624cb8eeccbafaa6ac9"
+    },
+    {
+      "name": "provenance.json.sig",
+      "size": 88,
+      "sha256": "6f542f60e4679a4dceafd13fa51fbcaee46f43cd6da3b6da02de536516f8bf1a"
+    },
+    {
+      "name": "release.json",
+      "size": 442,
+      "sha256": "80cf486e83b86ff9afcdceaf7473ad339b5e012aa8af4a4d7385f827ca5cf1be"
+    },
+    {
+      "name": "release.json.sig",
+      "size": 88,
+      "sha256": "12bf14ee8343168ffc1597a715b3afe904ad35d8116d67ba0d949953e1a2c564"
+    },
+    {
+      "name": "sbom.cdx.json",
+      "size": 5053,
+      "sha256": "df71511b7be28d5178da24ea6dbc82e7191bfd00f430c2f3403acd854eace964"
+    }
+  ],
+  "documentation_archive_note": "The immutable documentation.tar.gz is the source snapshot from the release commit and contains the pre-publication acceptance status that was accurate when it was built. It was not regenerated after publication; the current acceptance ledger records the published status.",
+  "limitations": "No physical amd64 host, fresh HTTP/systemd install, sustained Minecraft readiness, backup/restore, firewall, application self-updater staging, or failed-health rollback was tested. The release is not a production-readiness certification."
+}
