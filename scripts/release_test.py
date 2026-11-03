@@ -105,6 +105,70 @@ class Policy(unittest.TestCase):
                 release.guard(github, sha)
 
 
+class LocalGuard(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        old = pathlib.Path.cwd()
+        self.addCleanup(os.chdir, old)
+        os.chdir(self.temporary.name)
+        self.git('init', '-q', '-b', 'main')
+        self.git('config', 'user.name', 'Local Release Test')
+        self.git('config', 'user.email', 'release-test@example.invalid')
+        self.git('remote', 'add', 'origin', f'https://github.com/{release.REPOSITORY}.git')
+        self.workflow = pathlib.Path('.github/workflows/release.yml')
+        self.workflow.parent.mkdir(parents=True)
+        self.workflow.write_text('name: Release\non:\n  workflow_dispatch:\npermissions:\n  contents: read\n')
+        self.git('add', '.')
+        self.git('commit', '-q', '-m', 'feat: fixture')
+        self.sha = self.git('rev-parse', 'HEAD')
+        self.github = mock.Mock()
+        self.github.api.return_value = {'protected': True, 'commit': {'sha': self.sha}}
+
+    def git(self, *args):
+        return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    def test_local_guard_needs_no_workflow_context(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            release.guard_local(self.github, self.sha)
+
+    def test_local_guard_rejects_forks_dirty_non_main_and_wrong_sha(self):
+        for condition in ('fork', 'dirty', 'untracked', 'branch', 'sha'):
+            with self.subTest(condition=condition):
+                if condition == 'fork':
+                    self.git('remote', 'set-url', 'origin', 'https://github.com/attacker/fork.git')
+                elif condition == 'dirty':
+                    self.workflow.write_text('changed')
+                elif condition == 'untracked':
+                    pathlib.Path('unexpected').write_text('untracked')
+                elif condition == 'branch':
+                    self.git('switch', '-q', '-c', 'fixture-dev')
+                with self.assertRaises(ValueError):
+                    release.guard_local(self.github, 'b' * 40 if condition == 'sha' else self.sha)
+                self.git('remote', 'set-url', 'origin', f'https://github.com/{release.REPOSITORY}.git')
+                self.workflow.write_text('name: Release\non:\n  workflow_dispatch:\npermissions:\n  contents: read\n')
+                pathlib.Path('unexpected').unlink(missing_ok=True)
+                self.git('switch', '-q', 'main')
+
+    def test_local_guard_rejects_unprotected_or_moved_main(self):
+        for branch in ({'protected': False, 'commit': {'sha': self.sha}},
+                       {'protected': True, 'commit': {'sha': 'b' * 40}}):
+            self.github.api.return_value = branch
+            with self.assertRaises(ValueError):
+                release.guard_local(self.github, self.sha)
+
+    def test_local_guard_rejects_cloud_triggers(self):
+        for trigger in ('on:\n  push:\n', 'on: [release]\n', '"on":\n  push:\n'):
+            with self.subTest(trigger=trigger):
+                self.workflow.write_text('name: Release\n' + trigger)
+                self.git('add', '.')
+                self.git('commit', '-q', '-m', 'test: unsafe trigger')
+                sha = self.git('rev-parse', 'HEAD')
+                self.github.api.return_value['commit']['sha'] = sha
+                with self.assertRaisesRegex(ValueError, 'workflow'):
+                    release.guard_local(self.github, sha)
+
+
 class LocalDistribution(unittest.TestCase):
     def make(self, *args):
         return subprocess.run(['make', '--no-print-directory', *args],
@@ -328,10 +392,56 @@ class Publication(unittest.TestCase):
         self.run = mock.patch.object(release, 'run', return_value='').start()
         self.addCleanup(mock.patch.stopall)
 
-    def publish(self):
+    def publish(self, local=False):
         self.plan_path.write_text(json.dumps(self.plan))
         with contextlib.redirect_stdout(io.StringIO()):
-            release.publish(argparse.Namespace(plan=str(self.plan_path), assets=str(self.assets), tool='tool'), self.github)
+            release.publish(argparse.Namespace(plan=str(self.plan_path), assets=str(self.assets), tool='tool', local=local), self.github)
+
+    def local_assets(self):
+        (self.assets / 'provenance.jsonl').unlink()
+        for name in ('provenance.json', 'provenance.json.sig'):
+            (self.assets / name).write_bytes(name.encode())
+        self.local_guard = mock.patch.object(release, 'guard_local').start()
+
+    def test_local_publish_verifies_source_bound_signatures_before_and_after_readback(self):
+        self.local_assets()
+        self.publish(local=True)
+        self.assertEqual(self.github.events.count('download'), 9)
+        self.assertEqual(self.github.events[-1], 'publish')
+        self.assertEqual(self.local_guard.call_count, 2)
+        self.guard.assert_not_called()
+        self.provenance.assert_not_called()
+        verifies = [call.args for call in self.run.call_args_list if call.args[0] == 'tool']
+        self.assertEqual(len(verifies), 2)
+        for call in verifies:
+            self.assertEqual(call[1], 'verify-local')
+            self.assertIn(self.plan['commit'], call)
+            self.assertIn(self.plan['version'], call)
+
+    def test_invalid_local_provenance_cannot_start_a_draft(self):
+        self.local_assets()
+        self.run.side_effect = ValueError('invalid local signature')
+        with self.assertRaises(ValueError):
+            self.publish(local=True)
+        self.assertEqual(self.github.events, [])
+
+    def test_local_retry_never_replaces_different_provenance(self):
+        self.local_assets()
+        self.plan['retry'] = True
+        self.github.exists = True
+        self.github.files['provenance.json'] = b'x' * len((self.assets / 'provenance.json').read_bytes())
+        with self.assertRaises(ValueError):
+            self.publish(local=True)
+        self.assertNotIn('upload', self.github.events)
+        self.assertNotIn('publish', self.github.events)
+
+    def test_moved_local_main_leaves_verified_draft_unpublished(self):
+        self.local_assets()
+        self.local_guard.side_effect = [None, ValueError('main advanced')]
+        with self.assertRaises(ValueError):
+            self.publish(local=True)
+        self.assertEqual(self.github.events.count('download'), 9)
+        self.assertNotIn('publish', self.github.events)
 
     def test_publish_is_last_mutation_after_readback(self):
         self.publish()

@@ -23,7 +23,7 @@ install_control() (
         --output "$work/bootstrap.py" --write-out '%{http_code}' \
         https://raw.githubusercontent.com/gabrielpgava/newempire-server-control/main/deploy/bootstrap.py)"
     [[ "$status" == 200 ]] || { echo "Bootstrap download did not return HTTP 200." >&2; exit 1; }
-    printf '%s  %s\n' 44617f8efd6efdf3107b93b2aa16b76c66a5fa2d86a5de61f3a1d8e3102bab1b "$work/bootstrap.py" | sha256sum --check --status
+    printf '%s  %s\n' a7eb07af8a6d2b8df68676fe1449e718c4b2eadfbfb9932c21b12d052cc8b006 "$work/bootstrap.py" | sha256sum --check --status
     python3 -I "$work/bootstrap.py" "$@"
 )
 

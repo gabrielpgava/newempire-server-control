@@ -186,7 +186,7 @@ func buildRelease(version, commit, out string, public ed25519.PublicKey) error {
 		hash := sha256.Sum256(raw)
 		m.Assets[i].Size, m.Assets[i].SHA256 = int64(len(raw)), hex.EncodeToString(hash[:])
 	}
-	files, err := command("git", "ls-files", "-z", "--", "LICENSE", "README.md", "docs", "deploy")
+	files, err := command("git", "ls-files", "-z", "--", "LICENSE", "README.md", "install.sh", "docs", "deploy")
 	if err != nil {
 		return err
 	}
@@ -385,9 +385,96 @@ func verify(dir string, public ed25519.PublicKey) error {
 	return nil
 }
 
+func localManifest(dir, version, commit string) (updates.Manifest, error) {
+	m, _, err := readManifest(dir)
+	if err != nil {
+		return m, err
+	}
+	if m.Version != version || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(commit) {
+		return m, errors.New("local provenance requires the manifest version and a full lowercase source SHA")
+	}
+	return m, nil
+}
+
+func provenanceBytes(dir string, m updates.Manifest, commit string) ([]byte, error) {
+	type subject struct {
+		Name   string `json:"name"`
+		Size   int64  `json:"size"`
+		SHA256 string `json:"sha256"`
+	}
+	value := struct {
+		Schema     int       `json:"schema"`
+		Repository string    `json:"repository"`
+		Builder    string    `json:"builder"`
+		Commit     string    `json:"commit"`
+		Version    string    `json:"version"`
+		Subjects   []subject `json:"subjects"`
+	}{Schema: 1, Repository: updates.Repository, Builder: "local", Commit: commit, Version: m.Version}
+	names := append(payloadNames(m), "checksums.txt")
+	sort.Strings(names)
+	for _, name := range names {
+		raw, err := readRegular(filepath.Join(dir, name), limit)
+		if err != nil {
+			return nil, err
+		}
+		hash := sha256.Sum256(raw)
+		value.Subjects = append(value.Subjects, subject{name, int64(len(raw)), hex.EncodeToString(hash[:])})
+	}
+	return json.Marshal(value)
+}
+
+func signLocal(dir, version, commit string, public ed25519.PublicKey, private ed25519.PrivateKey) error {
+	m, err := localManifest(dir, version, commit)
+	if err != nil {
+		return err
+	}
+	if err := sign(dir, public, private); err != nil {
+		return err
+	}
+	raw, err := provenanceBytes(dir, m, commit)
+	if err != nil {
+		return err
+	}
+	if err := writeExclusive(filepath.Join(dir, "provenance.json"), raw); err != nil {
+		return err
+	}
+	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(private, raw))
+	if err := writeExclusive(filepath.Join(dir, "provenance.json.sig"), []byte(sig)); err != nil {
+		return err
+	}
+	return verifyLocal(dir, version, commit, public)
+}
+
+func verifyLocal(dir, version, commit string, public ed25519.PublicKey) error {
+	m, err := localManifest(dir, version, commit)
+	if err != nil {
+		return err
+	}
+	if err := verify(dir, public); err != nil {
+		return err
+	}
+	expected, err := provenanceBytes(dir, m, commit)
+	if err != nil {
+		return err
+	}
+	raw, err := readRegular(filepath.Join(dir, "provenance.json"), 64<<10)
+	if err != nil || !bytes.Equal(raw, expected) {
+		return errors.New("local provenance does not match the source identity and exact release payload")
+	}
+	sigRaw, err := readRegular(filepath.Join(dir, "provenance.json.sig"), 1024)
+	if err != nil {
+		return err
+	}
+	sig, err := decode(string(sigRaw), ed25519.SignatureSize)
+	if err != nil || !ed25519.Verify(public, raw, sig) {
+		return errors.New("local provenance signature does not match the pinned key")
+	}
+	return nil
+}
+
 func mainErr() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: release build|sign|verify|dry-run [flags]")
+		return errors.New("usage: release build|sign|verify|sign-local|verify-local|dry-run [flags]")
 	}
 	mode := os.Args[1]
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
@@ -416,7 +503,7 @@ func mainErr() error {
 			"--output", filepath.Join(*out, "sbom.cdx.json")); err != nil {
 			return err
 		}
-		if err := sign(*out, public, private); err != nil {
+		if err := signLocal(*out, *version, *commit, public, private); err != nil {
 			return err
 		}
 		fmt.Println("Dry-run verified with an ephemeral key; these are NOT official update assets.")
@@ -429,14 +516,19 @@ func mainErr() error {
 	switch mode {
 	case "build":
 		return buildRelease(*version, *commit, *out, public)
-	case "sign":
+	case "sign", "sign-local":
 		private, err := signingKey(os.Getenv("RELEASE_SIGNING_KEY"), public)
 		if err != nil {
 			return err
 		}
+		if mode == "sign-local" {
+			return signLocal(*dir, *version, *commit, public, private)
+		}
 		return sign(*dir, public, private)
 	case "verify":
 		return verify(*dir, public)
+	case "verify-local":
+		return verifyLocal(*dir, *version, *commit, public)
 	default:
 		return errors.New("unknown release command")
 	}

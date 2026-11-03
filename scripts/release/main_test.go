@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,5 +230,96 @@ func TestManifestRequiresBothArchitecturesAndCurrentSchema(t *testing.T) {
 	}
 	if !strings.HasPrefix(m.Assets[0].Name, "new-empire-control_1.2.3_linux_") {
 		t.Fatal("unexpected archive naming contract")
+	}
+}
+
+func TestLocalProvenanceBindsSourceAndEveryPayload(t *testing.T) {
+	dir, public, private := fixture(t)
+	sha := strings.Repeat("a", 40)
+	if err := signLocal(dir, "1.2.3", sha, public, private); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLocal(dir, "1.2.3", sha, public); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "provenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value struct {
+		Repository string `json:"repository"`
+		Builder    string `json:"builder"`
+		Commit     string `json:"commit"`
+		Version    string `json:"version"`
+		Subjects   []struct {
+			Name string `json:"name"`
+		} `json:"subjects"`
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Repository != updates.Repository || value.Builder != "local" || value.Commit != sha || value.Version != "1.2.3" || len(value.Subjects) != 7 {
+		t.Fatalf("incorrect local provenance: %s", raw)
+	}
+	found := false
+	for _, subject := range value.Subjects {
+		found = found || subject.Name == "checksums.txt"
+	}
+	if !found {
+		t.Fatal("checksums are not bound to the local signature")
+	}
+	if err := verifyLocal(dir, "1.2.3", strings.Repeat("b", 40), public); err == nil {
+		t.Fatal("accepted another source commit")
+	}
+	if err := verifyLocal(dir, "1.2.4", sha, public); err == nil {
+		t.Fatal("accepted another release version")
+	}
+	if err := signLocal(dir, "1.2.3", sha, public, private); err == nil {
+		t.Fatal("overwrote signed local artifacts")
+	}
+	// Recomputing unsigned checksums must not authenticate substituted documentation.
+	put(t, dir, "documentation.tar.gz", []byte("substituted documentation"))
+	m, _, err := readManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksums, err := checksumBytes(dir, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, dir, "checksums.txt", checksums)
+	if err := verify(dir, public); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLocal(dir, "1.2.3", sha, public); err == nil {
+		t.Fatal("accepted replaced documentation and recomputed checksums")
+	}
+}
+
+func TestLocalSigningRejectsInvalidSourceBeforeWriting(t *testing.T) {
+	for _, sha := range []string{"", "main", strings.Repeat("A", 40), strings.Repeat("a", 39)} {
+		dir, public, private := fixture(t)
+		if err := signLocal(dir, "1.2.3", sha, public, private); err == nil {
+			t.Fatal("accepted an invalid source commit")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "release.json.sig")); !os.IsNotExist(err) {
+			t.Fatal("signed before validating the source")
+		}
+	}
+}
+
+func TestLocalProvenanceRejectsCorruption(t *testing.T) {
+	for _, name := range []string{"provenance.json", "provenance.json.sig", "checksums.txt", "release.json.sig", "sbom.cdx.json", "new-empire-control_1.2.3_linux_arm64.tar.gz"} {
+		t.Run(name, func(t *testing.T) {
+			dir, public, private := fixture(t)
+			sha := strings.Repeat("a", 40)
+			if err := signLocal(dir, "1.2.3", sha, public, private); err != nil {
+				t.Fatal(err)
+			}
+			put(t, dir, name, []byte("corrupt"))
+			if err := verifyLocal(dir, "1.2.3", sha, public); err == nil {
+				t.Fatal("accepted a corrupt locally signed asset")
+			}
+		})
 	}
 }
